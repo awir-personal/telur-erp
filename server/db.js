@@ -37,7 +37,7 @@ async function createPool(dbName) {
 // Setiap entri dijalankan sekali, dicatat di schema_migrations. Jangan ubah entri lama — tambah entri baru.
 const MIGRATIONS = [
   ['001_init', [
-    `CREATE TABLE users (
+    `CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(60) NOT NULL UNIQUE,
       role ENUM('master','admin','finance') NOT NULL,
@@ -48,14 +48,14 @@ const MIGRATIONS = [
       locked_until DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
-    `CREATE TABLE sessions (
+    `CREATE TABLE IF NOT EXISTS sessions (
       token_hash CHAR(64) PRIMARY KEY,
       user_id INT NOT NULL,
       expires_at DATETIME NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )`,
-    `CREATE TABLE settings (k VARCHAR(50) PRIMARY KEY, v VARCHAR(255) NOT NULL)`,
-    `CREATE TABLE parties (
+    `CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) PRIMARY KEY, v VARCHAR(255) NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS parties (
       id INT AUTO_INCREMENT PRIMARY KEY,
       kind ENUM('customer','supplier') NOT NULL,
       name VARCHAR(120) NOT NULL,
@@ -67,13 +67,13 @@ const MIGRATIONS = [
       active TINYINT NOT NULL DEFAULT 1,
       UNIQUE KEY uq_party (kind, name)
     )`,
-    `CREATE TABLE units (
+    `CREATE TABLE IF NOT EXISTS units (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(30) NOT NULL UNIQUE,
       kg_per_unit DECIMAL(12,4) NULL,
       active TINYINT NOT NULL DEFAULT 1
     )`,
-    `CREATE TABLE items (
+    `CREATE TABLE IF NOT EXISTS items (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(80) NOT NULL UNIQUE,
       default_unit_id INT NOT NULL,
@@ -81,7 +81,7 @@ const MIGRATIONS = [
       active TINYINT NOT NULL DEFAULT 1,
       FOREIGN KEY (default_unit_id) REFERENCES units(id)
     )`,
-    `CREATE TABLE party_prices (
+    `CREATE TABLE IF NOT EXISTS party_prices (
       id INT AUTO_INCREMENT PRIMARY KEY,
       party_id INT NOT NULL,
       item_id INT NOT NULL,
@@ -93,7 +93,7 @@ const MIGRATIONS = [
       FOREIGN KEY (item_id) REFERENCES items(id),
       FOREIGN KEY (unit_id) REFERENCES units(id)
     )`,
-    `CREATE TABLE invoices (
+    `CREATE TABLE IF NOT EXISTS invoices (
       id INT AUTO_INCREMENT PRIMARY KEY,
       kind ENUM('sale','purchase') NOT NULL,
       number VARCHAR(40) NOT NULL,
@@ -112,7 +112,7 @@ const MIGRATIONS = [
       KEY ix_inv_date (kind, date),
       FOREIGN KEY (party_id) REFERENCES parties(id)
     )`,
-    `CREATE TABLE invoice_lines (
+    `CREATE TABLE IF NOT EXISTS invoice_lines (
       id INT AUTO_INCREMENT PRIMARY KEY,
       invoice_id INT NOT NULL,
       item_id INT NOT NULL,
@@ -126,7 +126,7 @@ const MIGRATIONS = [
       FOREIGN KEY (item_id) REFERENCES items(id),
       FOREIGN KEY (unit_id) REFERENCES units(id)
     )`,
-    `CREATE TABLE payments (
+    `CREATE TABLE IF NOT EXISTS payments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       kind ENUM('sale','purchase') NOT NULL,
       date DATE NOT NULL,
@@ -139,7 +139,7 @@ const MIGRATIONS = [
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (party_id) REFERENCES parties(id)
     )`,
-    `CREATE TABLE allocations (
+    `CREATE TABLE IF NOT EXISTS allocations (
       id INT AUTO_INCREMENT PRIMARY KEY,
       payment_id INT NOT NULL,
       invoice_id INT NOT NULL,
@@ -148,7 +148,7 @@ const MIGRATIONS = [
       FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
       FOREIGN KEY (invoice_id) REFERENCES invoices(id)
     )`,
-    `CREATE TABLE adjustments (
+    `CREATE TABLE IF NOT EXISTS adjustments (
       id INT AUTO_INCREMENT PRIMARY KEY,
       invoice_id INT NOT NULL,
       date DATE NOT NULL,
@@ -160,7 +160,7 @@ const MIGRATIONS = [
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
     )`,
-    `CREATE TABLE activity_log (
+    `CREATE TABLE IF NOT EXISTS activity_log (
       id INT AUTO_INCREMENT PRIMARY KEY,
       at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       user_id INT NULL,
@@ -171,24 +171,32 @@ const MIGRATIONS = [
       detail TEXT NULL,
       KEY ix_log_at (at)
     )`,
-    `INSERT INTO units (name, kg_per_unit) VALUES ('kg',1),('ikat',15),('peti',NULL),('tray',NULL),('butir',NULL)`,
-    `INSERT INTO items (name, default_unit_id, sort_order) VALUES
+    `INSERT IGNORE INTO units (name, kg_per_unit) VALUES ('kg',1),('ikat',15),('peti',NULL),('tray',NULL),('butir',NULL)`,
+    `INSERT IGNORE INTO items (name, default_unit_id, sort_order) VALUES
       ('Telor Curah',1,10),('Telor Omega',1,20),('Telor Putih',1,30),('Tray/Peti',4,40),('Telor Retak',1,50),('Telor Bocor',1,60)`,
-    `INSERT INTO settings (k, v) VALUES ('next_sale_no','1'),('company_name','Distribusi Telur')`,
+    `INSERT IGNORE INTO settings (k, v) VALUES ('next_sale_no','1'),('company_name','Distribusi Telur')`,
   ]],
 ];
 
+// DDL MySQL tidak bisa di-rollback, jadi migrasi yang terputus meninggalkan sebagian tabel.
+// Karena itu setiap pernyataan wajib aman diulang (IF NOT EXISTS / INSERT IGNORE): start berikutnya
+// melanjutkan sisanya. GET_LOCK mencegah dua proses yang start bersamaan bermigrasi berbarengan.
 async function migrate(pool) {
-  await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (id VARCHAR(60) PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
-  const [done] = await pool.query('SELECT id FROM schema_migrations');
-  const applied = new Set(done.map((r) => r.id));
-  for (const [id, stmts] of MIGRATIONS) {
-    if (applied.has(id)) continue;
-    const conn = await pool.getConnection();
-    try {
+  const conn = await pool.getConnection();
+  try {
+    const [[{ ok }]] = await conn.query("SELECT GET_LOCK('telur_erp_migrate', 30) AS ok");
+    if (ok !== 1) throw new Error('Migrasi database sedang dijalankan proses lain, coba lagi sebentar');
+    await conn.query(`CREATE TABLE IF NOT EXISTS schema_migrations (id VARCHAR(60) PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+    const [done] = await conn.query('SELECT id FROM schema_migrations');
+    const applied = new Set(done.map((r) => r.id));
+    for (const [id, stmts] of MIGRATIONS) {
+      if (applied.has(id)) continue;
       for (const s of stmts) await conn.query(s);
       await conn.query('INSERT INTO schema_migrations (id) VALUES (?)', [id]);
-    } finally { conn.release(); }
+    }
+  } finally {
+    await conn.query("SELECT RELEASE_LOCK('telur_erp_migrate')").catch(() => {});
+    conn.release();
   }
 }
 

@@ -20,7 +20,10 @@ export async function api(method, path, body) {
   try { data = await res.json(); } catch { /* bukan JSON */ }
   if (res.status === 401 && token) onUnauthorized();
   if (!res.ok) {
-    const err = new Error(data?.error || `Gagal (${res.status})`);
+    // Tanpa body JSON = bukan dari API kita (mis. proxy Vite saat server API mati).
+    const err = new Error(data?.error || (res.status >= 500
+      ? 'Server API tidak merespons. Tutup jendela server lalu jalankan ulang "Jalankan Telur ERP.bat", dan pastikan MySQL80 menyala.'
+      : `Gagal (${res.status})`));
     err.status = res.status;
     err.data = data;
     throw err;

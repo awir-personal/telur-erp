@@ -6,32 +6,19 @@ Web app (Node + Express + React + MySQL). Jalan di localhost dulu, nanti di-host
 
 ## Jalankan di PC (localhost)
 
-Butuh: Node 20+, MySQL80 menyala.
+Butuh: Node 20+, MySQL80 menyala, file `.env` (salin dari `.env.example`, isi `DB_PASSWORD`).
+
+**Pemakaian sehari-hari:** klik dua kali `Jalankan Telur ERP.bat`. Browser terbuka sendiri ke http://localhost:3200 setelah server siap. Untuk berhenti, tutup jendela hitamnya.
+
+> Kalau mengetik `npm ...` di PowerShell muncul *"running scripts is disabled on this system"*, pakai `npm.cmd` (mis. `npm.cmd run dev`) atau file .bat di atas.
+
+**Mode development** (API :3200 + Vite :5180, auto-reload):
 
 ```bash
-npm install
+npm.cmd run dev
 ```
 
-1. Salin `.env.example` → `.env`, isi `DB_PASSWORD`.
-2. Mode development (API port 3200 + Vite port 5180, auto-reload):
-
-```bash
-npm run dev
-```
-
-Buka http://localhost:5180
-
-3. Mode biasa (seperti di server):
-
-```bash
-npm run build
-```
-
-```bash
-npm start
-```
-
-Buka http://localhost:3200
+Buka http://localhost:5180. Di mode ini, kalau API crash (mis. MySQL belum menyala), jendela tetap terbuka menunggu perubahan file. Pesan "Server API tidak merespons" akan muncul di layar sampai Anda memperbaiki penyebabnya atau menjalankan ulang. Untuk pemakaian biasa, pakai file .bat.
 
 Database `telur_erp_db` dan semua tabel dibuat otomatis saat server start. Saat pertama dibuka, app meminta pembuatan **Master User**.
 

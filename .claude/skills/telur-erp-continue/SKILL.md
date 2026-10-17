@@ -27,5 +27,6 @@ Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/t
 - Harga beli diketik per invoice, **bukan** dihitung dari pembelian (user memilih ini secara eksplisit).
 - Selisih tidak boleh dihapus otomatis. Selalu tampilkan, lalu user justifikasi/ubah/bulatkan sendiri.
 - Master tidak boleh bisa melihat PIN. Hanya reset → PIN sementara tampil sekali → wajib ganti.
-- Migrasi DB: tambah entri baru di `MIGRATIONS` (`server/db.js`), jangan ubah entri lama.
+- Migrasi DB: tambah entri baru di `MIGRATIONS` (`server/db.js`), jangan ubah entri lama, dan setiap pernyataan harus aman diulang (IF NOT EXISTS / INSERT IGNORE). DDL MySQL tidak bisa di-rollback.
+- Di PC user, `npm` di PowerShell diblokir. Suruh pakai `Jalankan Telur ERP.bat` atau `npm.cmd`. Setelah uji preview, pastikan port 3200/5180 kosong (Vite yatim = error 500 di sisi user).
 - Nilai angka dari mysql2 sudah berupa number (`decimalNumbers: true`). `{x && <JSX/>}` dengan x = 0 akan merender "0" di layar.

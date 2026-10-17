@@ -37,7 +37,7 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 - `invoices.imported_total` = total di sheet asal (hanya hasil import); `diff_note` = justifikasi. `diffOpen` = selisih ≠ 0 dan belum ada justifikasi.
 - Sisa = total − Σadjustments − Σallocations. Status: lunas | sebagian | belum | lebih_bayar.
 - `parties` (customer/supplier, term_days, price_rule), `party_prices`, `items` (urutan kolom sheet), `units` (kg_per_unit), `users`, `sessions` (token di-hash sha256, 12 jam), `settings` (next_sale_no, next_purchase_no, company_name), `activity_log`.
-- Migrasi: tambah entri baru di `MIGRATIONS`, **jangan pernah ubah entri lama**.
+- Migrasi: tambah entri baru di `MIGRATIONS`, **jangan pernah ubah entri lama**. Setiap pernyataan WAJIB aman diulang (`CREATE TABLE IF NOT EXISTS`, `INSERT IGNORE`, cek kolom sebelum `ALTER`), karena DDL MySQL tidak bisa di-rollback. Migrasi yang terputus dilanjutkan pada start berikutnya. `GET_LOCK` mencegah dua proses bermigrasi bersamaan (`test/migrate.test.js`).
 - Waktu: session MySQL di-set `+07:00` (WIB); masa berlaku sesi/kunci memakai `UTC_TIMESTAMP()` (konsisten satu sama lain).
 
 ## 4. Hak akses (server/auth.js `PERMS`)
@@ -58,7 +58,7 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 
 - `npm run dev` → API :3200 (`node --watch`) + Vite :5180. `scripts/dev.js --db=nama` memakai DB lain.
 - Preview di sesi Claude: config `telur-erp` / `telur-erp-uitest` (DB `telur_erp_uitest_zz`) di `C:\Users\Han\Downloads\Claude\.claude\launch.json`. **Uji UI selalu di DB uitest**, jangan di `telur_erp_db`. DB uitest dihapus setelah selesai.
-- `npm test` = 17 tes (logika murni + alur API penuh di DB `telur_erp_test_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
+- `npm test` = 19 tes (logika murni + alur API penuh di DB `telur_erp_test_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
 - Sudah di-mutation-test: 13/14 mutasi tertangkap. Satu yang lolos (EPS di status lunas) adalah mutan ekuivalen karena `outstanding` sudah di-round2.
 
 ## 7. Jebakan yang sudah ditemui
@@ -69,10 +69,16 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 - Input angka (`NumInput`) memakai format Indonesia: "100.8" dibaca 1008. Saat blur, angka diformat ulang supaya terlihat.
 - CSV dibaca SheetJS dengan `raw: true` supaya "28.000" tidak jadi 28.
 
+- PowerShell user memblokir `npm.ps1` ("running scripts is disabled"). Pakai `npm.cmd` atau `Jalankan Telur ERP.bat` (build + start di :3200, browser dibuka server saat siap lewat `OPEN_BROWSER=1`).
+- `node --watch` tetap hidup walaupun server crash, dan Vite tetap melayani dengan proxy 500. Karena itu `.bat` untuk user memakai mode start biasa, dan `scripts/dev.js` mematikan seluruh pohon proses (`taskkill /T`) kalau salah satu proses mati.
+- `preview_stop` bisa meninggalkan Vite yatim di :5180. Sebelum selesai, cek `Get-NetTCPConnection -LocalPort 3200,5180`.
+
 ## 8. Ide berikutnya (belum diminta)
 
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **1.0.1 (2026-10-17)**: perbaikan dari laporan user "gagal run & error 500". (1) `npm` diblokir execution policy PowerShell → tambah `Jalankan Telur ERP.bat` (npm.cmd). (2) Vite sisa preview tetap memegang :5180 tanpa API → `dev.js` mematikan seluruh pohon proses, `.bat` memakai mode start biasa. (3) Ditemukan `telur_erp_db` setengah termigrasi (DDL terputus) yang akan membuat setiap start gagal → migrasi dibuat idempoten + `GET_LOCK`, dan DB itu sudah dilengkapi (masih 0 user). Pesan error 500 tanpa body dan port terpakai diperjelas.
 
 - **1.0.0 (2026-10-17)**: rilis awal. Semua fitur di atas. Diverifikasi di browser: setup master, login, import 17 baris contoh, alur selisih 3860 sampai lunas (transfer 300rb, samakan total sheet, pembulatan 113), invoice baru dengan saran harga & margin, buat user + PIN sementara, laporan piutang, tampilan mobile 375px tanpa scroll horizontal halaman.
