@@ -3,7 +3,8 @@ import React, { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { get, qs } from '../api';
 import { ErrorBox, PageTitle, StatusBadge, useAuth, useLoad } from '../components/ui';
-import { firstOfMonth, qty, rp, tgl, today } from '../format';
+import { firstOfMonth, qty, rp, tgl, today, STATUS } from '../format';
+import { downloadXlsx, xlDate } from '../lib/excel';
 
 const ROW_BG = { lunas: 'bg-green-50', sebagian: 'bg-amber-50', belum: '', lebih_bayar: 'bg-purple-50' };
 
@@ -32,9 +33,36 @@ export default function InvoicesPage({ kind }) {
   };
   const sum = (k) => rows.reduce((s, r) => s + r[k], 0);
 
+  // Export dengan susunan sama seperti sheet lama: 2 baris header, pasangan (qty, Harga) per barang.
+  const exportExcel = () => {
+    const head1 = ['Tanggal', isSale ? 'No Inv' : 'No Nota', 'Nama', ...cols.flatMap((c) => [c.name, '']), 'Total', 'Tgl Byr', 'Nominal', 'Sisa', 'Status', 'Keterangan'];
+    const head2 = ['', '', '', ...cols.flatMap((c) => [c.unit_name, 'Harga']), '', '', '', '', '', ''];
+    const body = rows.map((r) => [
+      xlDate(r.date), r.number, r.party_name,
+      ...cols.flatMap((c) => {
+        const ls = r.lines.filter((l) => l.item_id === c.id);
+        if (!ls.length) return ['', ''];
+        const prices = [...new Set(ls.map((l) => l.price))];
+        return [ls.reduce((a, l) => a + l.qty, 0), prices.length === 1 ? prices[0] : 'campur'];
+      }),
+      r.total, xlDate(r.last_paid), r.paid || '', r.outstanding || '', STATUS[r.status]?.label || r.status, [r.po_ref, r.notes].filter(Boolean).join(' | '),
+    ]);
+    const n = 3 + cols.length * 2;
+    const merges = [
+      ...[0, 1, 2].map((c) => ({ s: { r: 0, c }, e: { r: 1, c } })),
+      ...cols.map((_, i) => ({ s: { r: 0, c: 3 + i * 2 }, e: { r: 0, c: 4 + i * 2 } })),
+      ...[0, 1, 2, 3, 4, 5].map((k) => ({ s: { r: 0, c: n + k }, e: { r: 1, c: n + k } })),
+    ];
+    const widths = [10, 8, 26, ...cols.flatMap(() => [8, 10]), 13, 10, 13, 13, 12, 40];
+    downloadXlsx(`${isSale ? 'Penjualan' : 'Pembelian'} ${f.from} sd ${f.to}.xlsx`, [{ name: isSale ? 'Penjualan' : 'Pembelian', aoa: [head1, head2, ...body], merges, widths }]);
+  };
+
   return (
     <div>
-      <PageTitle right={perms.invoice && <Link className="btn-primary" to={isSale ? '/penjualan/baru' : '/pembelian/baru'}>+ {isSale ? 'Invoice Penjualan' : 'Nota Pembelian'}</Link>}>
+      <PageTitle right={<>
+        <button className="btn-ghost" onClick={exportExcel} disabled={!rows.length}>⬇ Excel</button>
+        {perms.invoice && <Link className="btn-primary" to={isSale ? '/penjualan/baru' : '/pembelian/baru'}>+ {isSale ? 'Invoice Penjualan' : 'Nota Pembelian'}</Link>}
+      </>}>
         {isSale ? 'Penjualan' : 'Pembelian'}
       </PageTitle>
       <div className="card mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">

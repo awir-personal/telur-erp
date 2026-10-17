@@ -13,6 +13,9 @@ import MastersPage from './pages/Masters';
 import UsersPage from './pages/Users';
 import ImportPage from './pages/Import';
 import SettingsPage from './pages/Settings';
+import Dashboard from './pages/Dashboard';
+import KasBank from './pages/KasBank';
+import InvoicePrint from './pages/InvoicePrint';
 
 const ROLE = { master: 'Master', admin: 'Admin', finance: 'Finance' };
 
@@ -42,10 +45,12 @@ export default function App() {
   const p = me.perms;
   const isMaster = me.user.role === 'master';
   const links = [
+    ['/dashboard', 'Dashboard'],
     ['/penjualan', 'Penjualan'],
     ['/pembelian', 'Pembelian'],
     ['/penerimaan', 'Penerimaan'],
     ['/pembayaran', 'Bayar Supplier'],
+    ['/kas', 'Kas & Bank'],
     ['/laporan', 'Laporan'],
     ['/master', 'Master'],
     p.import && ['/import', 'Import'],
@@ -78,13 +83,16 @@ export default function App() {
         </nav>
         <main className="mx-auto w-full max-w-[1600px] flex-1 p-3 pb-10 sm:px-6">
           <Routes>
-            <Route path="/" element={<Navigate to="/penjualan" replace />} />
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/penjualan" element={<InvoicesPage kind="sale" />} />
             <Route path="/pembelian" element={<InvoicesPage kind="purchase" />} />
             <Route path="/penjualan/baru" element={<InvoiceForm kind="sale" />} />
             <Route path="/pembelian/baru" element={<InvoiceForm kind="purchase" />} />
             <Route path="/invoice/:id/edit" element={<InvoiceForm />} />
             <Route path="/invoice/:id" element={<InvoiceDetail />} />
+            <Route path="/invoice/:id/cetak" element={<InvoicePrint />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/kas" element={<KasBank />} />
             <Route path="/penerimaan" element={<PaymentsPage kind="sale" />} />
             <Route path="/pembayaran" element={<PaymentsPage kind="purchase" />} />
             <Route path="/laporan" element={<ReportsPage />} />
@@ -92,7 +100,7 @@ export default function App() {
             <Route path="/import" element={<ImportPage />} />
             <Route path="/user" element={<UsersPage />} />
             <Route path="/pengaturan" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/penjualan" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
         <VersionFooter />

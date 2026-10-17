@@ -9,7 +9,8 @@ const r2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
 
 export default function PaymentForm({ kind, paymentId, partyId: initialParty, invoiceId, onClose, onSaved }) {
   const isSale = kind === 'sale';
-  const [p, setP] = useState({ date: today(), party_id: initialParty || '', method: 'transfer', reference: '', amount: '', notes: '' });
+  const [p, setP] = useState({ date: today(), party_id: initialParty || '', method: 'transfer', account_id: '', reference: '', amount: '', notes: '' });
+  const accounts = useLoad(() => get('/accounts'), []);
   const [alloc, setAlloc] = useState({}); // invoice_id → nominal
   const [existing, setExisting] = useState({}); // alokasi lama pembayaran ini (untuk menghitung ruang)
   const parties = useLoad(() => get('/parties' + qs({ kind: isSale ? 'customer' : 'supplier' })), [kind]);
@@ -20,7 +21,7 @@ export default function PaymentForm({ kind, paymentId, partyId: initialParty, in
   useEffect(() => {
     if (!paymentId) return;
     get(`/payments/${paymentId}`).then((d) => {
-      setP({ date: d.date, party_id: d.party_id, method: d.method, reference: d.reference || '', amount: d.amount, notes: d.notes || '' });
+      setP({ date: d.date, party_id: d.party_id, method: d.method, account_id: d.account_id || '', reference: d.reference || '', amount: d.amount, notes: d.notes || '' });
       const m = Object.fromEntries(d.allocations.map((x) => [x.invoice_id, x.amount]));
       setAlloc(m); setExisting(m);
     }, a.setError);
@@ -89,7 +90,13 @@ export default function PaymentForm({ kind, paymentId, partyId: initialParty, in
             </select>
           </Field>
           <Field label="Nominal diterima"><NumInput value={p.amount} onChange={(v) => setP({ ...p, amount: v })} required /></Field>
-          <Field label="Referensi (no. transfer, nama pengirim)" className="col-span-2"><input className="inp" value={p.reference} onChange={(e) => setP({ ...p, reference: e.target.value })} /></Field>
+          <Field label={isSale ? 'Masuk ke rekening (opsional)' : 'Dibayar dari rekening (opsional)'}>
+            <select className="inp" value={p.account_id} onChange={(e) => setP({ ...p, account_id: Number(e.target.value) || '' })}>
+              <option value="">— belum ditentukan —</option>
+              {(accounts.data || []).filter((x) => x.active || x.id === p.account_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Referensi (no. transfer, nama pengirim)"><input className="inp" value={p.reference} onChange={(e) => setP({ ...p, reference: e.target.value })} /></Field>
           <Field label="Catatan" className="col-span-2"><input className="inp" value={p.notes} onChange={(e) => setP({ ...p, notes: e.target.value })} /></Field>
         </div>
 

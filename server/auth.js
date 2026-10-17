@@ -62,7 +62,7 @@ function authenticate(pool) {
 // Hak akses per peran. master = semua.
 const PERMS = {
   admin: ['invoice', 'master', 'import', 'note', 'view'],
-  finance: ['payment', 'adjust', 'note', 'view'],
+  finance: ['payment', 'adjust', 'note', 'view', 'cash'],
 };
 const can = (user, perm) => user.role === 'master' || (PERMS[user.role] || []).includes(perm);
 const requirePerm = (perm) => (req, res, next) =>

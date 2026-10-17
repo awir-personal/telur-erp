@@ -24,13 +24,15 @@ function General() {
   const [f, setF] = useState(null);
   const [saved, setSaved] = useState(false);
   const a = useAction();
-  useEffect(() => { if (s.data) setF({ company_name: s.data.company_name, next_sale_no: Number(s.data.next_sale_no) }); }, [s.data]);
+  useEffect(() => { if (s.data) setF({ company_name: s.data.company_name, company_address: s.data.company_address || '', company_phone: s.data.company_phone || '', next_sale_no: Number(s.data.next_sale_no) }); }, [s.data]);
   if (!f) return <div className="card"><ErrorBox error={s.error} /></div>;
   const save = (e) => { e.preventDefault(); setSaved(false); a.run(async () => { await put('/settings', f); setSaved(true); s.reload(); }); };
   return (
     <form className="card space-y-3" onSubmit={save}>
       <h3 className="font-semibold">Umum</h3>
       <Field label="Nama perusahaan"><input className="inp" value={f.company_name} onChange={(e) => setF({ ...f, company_name: e.target.value })} /></Field>
+      <Field label="Alamat (tampil di invoice cetak)"><textarea className="inp" rows={2} value={f.company_address} onChange={(e) => setF({ ...f, company_address: e.target.value })} /></Field>
+      <Field label="Telepon / WA"><input className="inp" value={f.company_phone} onChange={(e) => setF({ ...f, company_phone: e.target.value })} /></Field>
       <Field label="Nomor invoice penjualan berikutnya"><NumInput value={f.next_sale_no} onChange={(v) => setF({ ...f, next_sale_no: v })} /></Field>
       <p className="text-xs text-slate-500">Nomor yang sudah terpakai otomatis dilewati. Import data lama juga menaikkan nomor ini.</p>
       <ErrorBox error={a.error} />

@@ -29,6 +29,10 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 | Import | Sudah ada; user akan mengetesnya sendiri dengan data asli |
 | User | Nama + PIN 6 digit, ganti PIN, reset PIN oleh master. **Master TIDAK bisa melihat PIN** (user memilih hash + reset dibanding PIN yang bisa dibaca) |
 | Repo | `awir-personal/telur-erp` (private) |
+| Isi v2.0 (2026-10-17) | Dashboard, cetak/PDF invoice, export Excel, Kas & Bank |
+| Rekening di pembayaran | **Opsional** (user menolak rekomendasi "wajib"). Pembayaran tanpa rekening tidak masuk saldo mana pun, tapi dihitung & diperingatkan di Kas & Bank |
+| Isi v3.0 | Siap Railway, PWA (install di HP), backup, rekonsiliasi bank (BCA/BNI/Mandiri + pemetaan manual), jurnal & laporan keuangan |
+| HPP laporan keuangan | **Periodik** (persediaan awal + pembelian − persediaan akhir), laporan margin tetap pakai harga beli ketikan. Selisih keduanya ditampilkan sebagai kontrol |
 
 ## 3. Model data (server/db.js, migrasi otomatis saat start)
 
@@ -41,9 +45,15 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 - Migrasi: tambah entri baru di `MIGRATIONS`, **jangan pernah ubah entri lama**. Setiap pernyataan WAJIB aman diulang (`CREATE TABLE IF NOT EXISTS`, `INSERT IGNORE`, cek kolom sebelum `ALTER`), karena DDL MySQL tidak bisa di-rollback. Migrasi yang terputus dilanjutkan pada start berikutnya. `GET_LOCK` mencegah dua proses bermigrasi bersamaan (`test/migrate.test.js`).
 - Waktu: session MySQL di-set `+07:00` (WIB); masa berlaku sesi/kunci memakai `UTC_TIMESTAMP()` (konsisten satu sama lain).
 
+### Kas & Bank (v2.0, migrasi `002_kas_bank`)
+- `accounts` (kas/bank, saldo awal + tanggal saldo awal), `cash_categories` (biaya/pemasukan/modal/prive), `cash_txns` (biaya, pemasukan, modal, prive, transfer), `payments.account_id` (opsional).
+- Saldo = saldo awal + mutasi SEJAK tanggal saldo awal. Mutasi sebelum tanggal itu tidak dihitung (sudah termasuk di saldo awal) dan dilaporkan sebagai `ignoredBeforeOpening`. Logikanya ada di `server/routes/cash.js` (`movements`, `balanceOf`), dipakai bersama oleh Dashboard.
+- Export Excel di browser (`src/lib/excel.js`): angka tetap angka, tanggal jadi sel tanggal asli (format d-mmm-yy). Export Penjualan/Pembelian memakai susunan sheet lama (2 baris header + merge).
+- Cetak invoice: `/invoice/:id/cetak` → `window.print()` (PDF lewat "Simpan sebagai PDF"). Data perusahaan (nama, alamat, telepon) diatur di Pengaturan.
+
 ## 4. Hak akses (server/auth.js `PERMS`)
 
-master = semua. admin = invoice, master, import, note, view. finance = payment, adjust, note, view. Kelola user, pengaturan, dan log = khusus role master.
+master = semua. admin = invoice, master, import, note, view. finance = payment, adjust, note, view, cash (Kas & Bank). Kelola user, pengaturan, dan log = khusus role master.
 
 ## 5. Import (server/importer.js)
 
@@ -79,6 +89,8 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **2.0.0 (2026-10-17)**: Dashboard (halaman awal: penjualan hari/bulan ini, margin, piutang lewat jatuh tempo, daftar hal yang perlu ditindaklanjuti, saldo kas), cetak/PDF invoice, export Excel (Penjualan/Pembelian format sheet lama, umur piutang/hutang, buku rekening), Kas & Bank (rekening, biaya/pemasukan/modal/prive/transfer, buku mutasi + saldo berjalan, rekening opsional di pembayaran). 23 tes; 7/7 mutasi baru tertangkap.
 
 - **1.2.0 (2026-10-17)**: tampilan disamakan dengan app lain (lihat bagian 1), versi vX.Y di pojok, mode gelap, dialog konfirmasi sendiri. Bug: invoice dengan harga kosong (total 0) tertulis "Lunas", sekarang "Belum bayar". Server uji Claude dipindah ke port 3299 + `dist-uitest` + DB `telur_erp_uitest_zz` (`scripts/uitest.js`), karena user menjalankan app aslinya di 3200 bersamaan.
 

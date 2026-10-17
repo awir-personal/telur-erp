@@ -64,7 +64,7 @@ function publicRoutes(pool, { setupCode, loginDelayMs = 400 }) {
 function privateRoutes(pool) {
   const r = express.Router();
 
-  r.get('/auth/me', (req, res) => res.json({ user: req.user, perms: Object.fromEntries(['invoice', 'master', 'import', 'payment', 'adjust', 'note', 'view'].map((p) => [p, A.can(req.user, p)])) }));
+  r.get('/auth/me', (req, res) => res.json({ user: req.user, perms: Object.fromEntries(['invoice', 'master', 'import', 'payment', 'adjust', 'note', 'view', 'cash'].map((p) => [p, A.can(req.user, p)])) }));
 
   r.post('/auth/logout', async (req, res) => {
     await pool.query('DELETE FROM sessions WHERE token_hash = ?', [req.tokenHash]);

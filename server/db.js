@@ -176,7 +176,61 @@ const MIGRATIONS = [
       ('Telor Curah',1,10),('Telor Omega',1,20),('Telor Putih',1,30),('Tray/Peti',4,40),('Telor Retak',1,50),('Telor Bocor',1,60)`,
     `INSERT IGNORE INTO settings (k, v) VALUES ('next_sale_no','1'),('company_name','Distribusi Telur')`,
   ]],
+  // v2.0 — Kas & Bank. Rekening di pembayaran OPSIONAL (keputusan user).
+  ['002_kas_bank', [
+    `CREATE TABLE IF NOT EXISTS accounts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(80) NOT NULL UNIQUE,
+      type ENUM('kas','bank') NOT NULL,
+      bank VARCHAR(30) NULL,
+      account_no VARCHAR(40) NULL,
+      opening_balance DECIMAL(15,2) NOT NULL DEFAULT 0,
+      opening_date DATE NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      active TINYINT NOT NULL DEFAULT 1
+    )`,
+    `CREATE TABLE IF NOT EXISTS cash_categories (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      kind ENUM('biaya','pemasukan','modal','prive') NOT NULL,
+      name VARCHAR(80) NOT NULL,
+      active TINYINT NOT NULL DEFAULT 1,
+      UNIQUE KEY uq_cat (kind, name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS cash_txns (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      date DATE NOT NULL,
+      kind ENUM('biaya','pemasukan','modal','prive','transfer') NOT NULL,
+      account_id INT NOT NULL,
+      to_account_id INT NULL,
+      category_id INT NULL,
+      amount DECIMAL(15,2) NOT NULL,
+      reference VARCHAR(120) NULL,
+      note VARCHAR(255) NULL,
+      created_by INT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY ix_cash_date (date),
+      FOREIGN KEY (account_id) REFERENCES accounts(id),
+      FOREIGN KEY (to_account_id) REFERENCES accounts(id),
+      FOREIGN KEY (category_id) REFERENCES cash_categories(id)
+    )`,
+    addColumn('payments', 'account_id', 'INT NULL'),
+    `INSERT IGNORE INTO accounts (name, type, sort_order) VALUES ('Kas Tunai', 'kas', 0)`,
+    `INSERT IGNORE INTO cash_categories (kind, name) VALUES
+      ('biaya','Transport & Ongkir'),('biaya','Gaji & Upah'),('biaya','Sewa'),('biaya','Listrik, Air & Internet'),
+      ('biaya','Kemasan & Tray'),('biaya','Biaya Bank'),('biaya','Lain-lain'),
+      ('pemasukan','Pendapatan Lain'),('pemasukan','Bunga Bank'),('modal','Setoran Modal'),('prive','Penarikan Pemilik')`,
+    `INSERT IGNORE INTO settings (k, v) VALUES ('company_address',''),('company_phone','')`,
+  ]],
 ];
+
+// ALTER TABLE ADD COLUMN yang aman diulang (MySQL 8 tidak punya ADD COLUMN IF NOT EXISTS).
+function addColumn(table, column, def) {
+  return async (conn) => {
+    const [[{ n }]] = await conn.query(
+      'SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?', [table, column]);
+    if (!n) await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${def}`);
+  };
+}
 
 // DDL MySQL tidak bisa di-rollback, jadi migrasi yang terputus meninggalkan sebagian tabel.
 // Karena itu setiap pernyataan wajib aman diulang (IF NOT EXISTS / INSERT IGNORE): start berikutnya
@@ -191,7 +245,7 @@ async function migrate(pool) {
     const applied = new Set(done.map((r) => r.id));
     for (const [id, stmts] of MIGRATIONS) {
       if (applied.has(id)) continue;
-      for (const s of stmts) await conn.query(s);
+      for (const s of stmts) await (typeof s === 'function' ? s(conn) : conn.query(s));
       await conn.query('INSERT INTO schema_migrations (id) VALUES (?)', [id]);
     }
   } finally {

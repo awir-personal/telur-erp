@@ -8,9 +8,9 @@ const METHODS = ['cash', 'transfer', 'giro', 'lainnya'];
 const PARTY = { sale: 'customer', purchase: 'supplier' };
 
 async function listPayments(db, where, params) {
-  const [rows] = await db.query(`SELECT p.*, pt.name AS party_name, u.name AS created_by_name,
+  const [rows] = await db.query(`SELECT p.*, pt.name AS party_name, u.name AS created_by_name, ac.name AS account_name,
       COALESCE((SELECT SUM(a.amount) FROM allocations a WHERE a.payment_id = p.id), 0) AS allocated
-    FROM payments p JOIN parties pt ON pt.id = p.party_id LEFT JOIN users u ON u.id = p.created_by
+    FROM payments p JOIN parties pt ON pt.id = p.party_id LEFT JOIN users u ON u.id = p.created_by LEFT JOIN accounts ac ON ac.id = p.account_id
     WHERE ${where} ORDER BY p.date DESC, p.id DESC`, params);
   return rows.map((p) => ({ ...p, unallocated: round2(p.amount - p.allocated) }));
 }
@@ -50,7 +50,12 @@ module.exports = function paymentRoutes(pool) {
     const head = {
       date: reqDate(b.date), party_id: party.id, method: b.method, reference: optStr(b.reference, 120),
       amount: round2(reqNum(b.amount, 'Nominal', { min: 0, allowZero: false })), notes: optStr(b.notes, 2000),
+      account_id: b.account_id ? Number(b.account_id) : null, // opsional (keputusan user)
     };
+    if (head.account_id) {
+      const [[acc]] = await pool.query('SELECT id FROM accounts WHERE id = ?', [head.account_id]);
+      if (!acc) throw bad('Rekening tidak ditemukan');
+    }
     const allocs = (Array.isArray(b.allocations) ? b.allocations : [])
       .map((a) => ({ invoice_id: Number(a.invoice_id), amount: round2(reqNum(a.amount, 'Alokasi', { min: 0 })) }))
       .filter((a) => a.amount > 0);

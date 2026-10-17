@@ -118,7 +118,10 @@ module.exports = function masterRoutes(pool) {
   });
   r.put('/settings', async (req, res) => {
     if (req.user.role !== 'master') return res.status(403).json({ error: 'Hanya master user' });
-    const allowed = { company_name: (v) => reqStr(v, 'Nama perusahaan', 120), next_sale_no: (v) => String(reqNum(v, 'Nomor invoice berikutnya', { min: 1 })) };
+    const allowed = {
+      company_name: (v) => reqStr(v, 'Nama perusahaan', 120), next_sale_no: (v) => String(reqNum(v, 'Nomor invoice berikutnya', { min: 1 })),
+      company_address: (v) => optStr(v, 250) || '', company_phone: (v) => optStr(v, 60) || '',
+    };
     for (const [k, fn] of Object.entries(allowed)) {
       if (req.body[k] == null) continue;
       await pool.query('INSERT INTO settings (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', [k, fn(req.body[k])]);

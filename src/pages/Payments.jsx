@@ -25,19 +25,19 @@ export default function PaymentsPage({ kind }) {
       <ErrorBox error={list.error} />
       <div className="overflow-x-auto rounded border border-slate-300 bg-white">
         <table className="sheet w-full border-collapse">
-          <thead><tr><th>Tgl bayar</th><th>{isSale ? 'Customer' : 'Supplier'}</th><th>Metode</th><th>Referensi</th><th>Nominal</th><th>Teralokasi</th><th>Belum dialokasi</th><th>Dicatat oleh</th><th>Catatan</th></tr></thead>
+          <thead><tr><th>Tgl bayar</th><th>{isSale ? 'Customer' : 'Supplier'}</th><th>Metode</th><th>Rekening</th><th>Referensi</th><th>Nominal</th><th>Teralokasi</th><th>Belum dialokasi</th><th>Dicatat oleh</th><th>Catatan</th></tr></thead>
           <tbody>
-            {!rows.length && <tr><td colSpan={9} className="p-3 text-center text-slate-500">{list.loading ? 'Memuat…' : 'Tidak ada data'}</td></tr>}
+            {!rows.length && <tr><td colSpan={10} className="p-3 text-center text-slate-500">{list.loading ? 'Memuat…' : 'Tidak ada data'}</td></tr>}
             {rows.map((p) => (
               <tr key={p.id} className={`hover:bg-sky-50 ${perms.payment ? 'cursor-pointer' : ''}`} onClick={() => perms.payment && setModal({ paymentId: p.id, partyId: p.party_id })}>
-                <td>{tgl(p.date)}</td><td>{p.party_name}</td><td>{METHOD[p.method]}</td><td>{p.reference}</td>
+                <td>{tgl(p.date)}</td><td>{p.party_name}</td><td>{METHOD[p.method]}</td><td>{p.account_name || <span className="text-slate-400">—</span>}</td><td>{p.reference}</td>
                 <td className="text-right font-semibold">{rp(p.amount)}</td><td className="text-right">{rp(p.allocated)}</td>
                 <td className={`text-right ${p.unallocated ? 'bg-amber-100 font-semibold text-amber-800' : ''}`}>{p.unallocated ? rp(p.unallocated) : ''}</td>
                 <td>{p.created_by_name}</td><td className="max-w-[260px] truncate" title={p.notes || ''}>{p.notes}</td>
               </tr>
             ))}
           </tbody>
-          {rows.length > 0 && <tfoot><tr className="bg-slate-100 font-semibold"><td colSpan={4}>{rows.length} pembayaran</td>
+          {rows.length > 0 && <tfoot><tr className="bg-slate-100 font-semibold"><td colSpan={5}>{rows.length} pembayaran</td>
             <td className="text-right">{rp(rows.reduce((s, p) => s + p.amount, 0))}</td><td className="text-right">{rp(rows.reduce((s, p) => s + p.allocated, 0))}</td>
             <td className="text-right">{rp(rows.reduce((s, p) => s + p.unallocated, 0))}</td><td colSpan={2} /></tr></tfoot>}
         </table>

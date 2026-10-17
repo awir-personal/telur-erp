@@ -246,6 +246,62 @@ test('nomor otomatis melompati nomor yang sudah terpakai', async () => {
   assert.equal(r.number, '5002');
 });
 
+test('v2 Kas & Bank: saldo = saldo awal + penerimaan − pembayaran − biaya ± transfer', async () => {
+  const accs = await ok(call('GET', '/accounts', null, S.fin));
+  const kas = accs.find((a) => a.name === 'Kas Tunai');
+  assert.ok(kas);
+  assert.equal((await call('POST', '/accounts', { name: 'BCA 2099', type: 'bank' }, S.admin)).status, 403); // admin bukan pengelola kas
+  const bca = await ok(call('POST', '/accounts', { name: 'BCA 2099', type: 'bank', bank: 'BCA', opening_balance: 1000000, opening_date: '2099-03-01' }, S.fin));
+  S.bca = bca.id; S.kas = kas.id;
+  const cats = await ok(call('GET', '/cash/categories', null, S.fin));
+  const ongkir = cats.find((c) => c.name === 'Transport & Ongkir');
+  const modal = cats.find((c) => c.kind === 'modal');
+
+  // penerimaan customer ke BCA (rekening opsional: tanpa rekening tetap boleh)
+  await ok(call('POST', '/payments', { kind: 'sale', party_id: S.cust, method: 'transfer', date: '2099-03-02', amount: 500000, account_id: S.bca, allocations: [] }, S.fin));
+  await ok(call('POST', '/payments', { kind: 'sale', party_id: S.cust, method: 'cash', date: '2099-03-02', amount: 7000, allocations: [] }, S.fin));
+  // bayar supplier dari BCA
+  await ok(call('POST', '/payments', { kind: 'purchase', party_id: S.supp, method: 'transfer', date: '2099-03-03', amount: 200000, account_id: S.bca, allocations: [] }, S.fin));
+  // biaya, setor modal ke kas, transfer BCA → kas
+  await ok(call('POST', '/cash/txns', { kind: 'biaya', date: '2099-03-04', account_id: S.bca, category_id: ongkir.id, amount: 25000, note: 'Ongkir' }, S.fin));
+  await ok(call('POST', '/cash/txns', { kind: 'modal', date: '2099-03-04', account_id: S.kas, category_id: modal.id, amount: 300000 }, S.fin));
+  await ok(call('POST', '/cash/txns', { kind: 'transfer', date: '2099-03-05', account_id: S.bca, to_account_id: S.kas, amount: 100000 }, S.fin));
+  // sebelum tanggal saldo awal: tidak dihitung (sudah termasuk saldo awal)
+  await ok(call('POST', '/cash/txns', { kind: 'biaya', date: '2099-02-20', account_id: S.bca, category_id: ongkir.id, amount: 999, note: 'lama' }, S.fin));
+  // validasi
+  const same = await call('POST', '/cash/txns', { kind: 'transfer', date: '2099-03-05', account_id: S.bca, to_account_id: S.bca, amount: 1 }, S.fin);
+  assert.equal(same.status, 400);
+  assert.match(same.body.error, /tidak boleh sama/);
+  assert.equal((await call('POST', '/cash/txns', { kind: 'biaya', date: '2099-03-05', account_id: S.bca, category_id: modal.id, amount: 1 }, S.fin)).status, 400);
+  assert.equal((await call('POST', '/cash/txns', { kind: 'biaya', date: '2099-03-05', account_id: S.bca, category_id: ongkir.id, amount: 1 }, S.admin)).status, 403);
+
+  const bal = await ok(call('GET', '/cash/balances?as_of=2099-03-31', null, S.fin));
+  const b = bal.accounts.find((a) => a.id === S.bca);
+  assert.equal(b.balance, 1000000 + 500000 - 200000 - 25000 - 100000);
+  assert.equal(b.ignoredBeforeOpening, 1);
+  assert.equal(bal.accounts.find((a) => a.id === S.kas).balance, 300000 + 100000);
+  assert.ok(bal.paymentsWithoutAccount.count >= 1);
+
+  const led = await ok(call('GET', `/cash/ledger?account_id=${S.bca}&from=2099-03-03&to=2099-03-31`, null, S.fin));
+  assert.equal(led.opening, 1500000); // saldo awal + penerimaan 2 Mar
+  assert.equal(led.closing, 1175000);
+  assert.equal(led.rows.at(-1).balance, 1175000);
+  assert.deepEqual(led.rows.map((x) => x.amount), [-200000, -25000, -100000]);
+});
+
+test('v2 dashboard: piutang lewat jatuh tempo, hal yang perlu ditindaklanjuti, saldo kas', async () => {
+  // invoice yang BELUM jatuh tempo (30 Mar + termin 14 hari) tidak boleh ikut dihitung lewat jatuh tempo
+  await ok(call('POST', '/invoices', { kind: 'sale', date: '2099-03-30', party_id: S.cust, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 10, price: 30000 }] }, S.admin));
+  const d = await ok(call('GET', '/dashboard?today=2099-03-31', null, S.fin));
+  assert.ok(d.receivable.total > 0);
+  assert.ok(d.receivable.overdue > 0);
+  assert.ok(d.receivable.total - d.receivable.overdue >= 300000);
+  assert.ok(d.topOverdue.some((p) => p.party_name === 'Toko Uji 2099'));
+  assert.ok(d.todo.zeroPrice >= 1); // 3858 Adi D
+  assert.ok(d.todo.unallocatedSale >= 507000);
+  assert.equal(d.cash.find((c) => c.id === S.bca).balance, 1175000);
+});
+
 test('log aktivitas mencatat siapa melakukan apa, tanpa PIN', async () => {
   const logs = await ok(call('GET', '/logs?limit=500', null, S.master));
   const actions = new Set(logs.map((l) => l.action));

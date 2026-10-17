@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { get, qs } from '../api';
 import { ErrorBox, PageTitle, useLoad } from '../components/ui';
 import { addDays, qty, rp, tgl, today } from '../format';
+import { downloadXlsx, xlDate } from '../lib/excel';
 
 const TABS = [['piutang', 'Umur Piutang'], ['hutang', 'Umur Hutang'], ['margin', 'Margin'], ['stok', 'Info Stok']];
 
@@ -31,7 +32,15 @@ function Aging({ kind }) {
   const d = r.data;
   return (
     <div>
-      <label className="mb-3 inline-block"><span className="lbl">Per tanggal</span><input type="date" className="inp" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label><span className="lbl">Per tanggal</span><input type="date" className="inp" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></label>
+        <button className="btn-ghost" disabled={!d?.rows.length} onClick={() => downloadXlsx(`Umur ${kind === 'sale' ? 'Piutang' : 'Hutang'} ${asOf}.xlsx`, [{
+          name: kind === 'sale' ? 'Piutang' : 'Hutang', widths: [28, 10, 11, 11, ...BUCKETS.map(() => 14), 14],
+          aoa: [[kind === 'sale' ? 'Customer' : 'Supplier', 'No', 'Tanggal', 'Jatuh tempo', ...BUCKETS.map(([, v]) => v), 'Sisa'],
+            ...d.rows.flatMap((x) => x.invoices.map((i) => [x.party_name, i.number, xlDate(i.date), xlDate(i.due_date), ...BUCKETS.map(([k]) => (i.bucket === k ? i.outstanding : '')), i.outstanding])),
+            ['Total', '', '', '', ...BUCKETS.map(([k]) => d.totals[k]), d.totals.total]],
+        }])}>⬇ Excel</button>
+      </div>
       <ErrorBox error={r.error} />
       {d && (
         <div className="overflow-x-auto rounded border border-slate-300 bg-white">
