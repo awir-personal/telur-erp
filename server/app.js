@@ -20,6 +20,8 @@ function createApp(pool, opts = {}) {
   app.use('/api', require('./routes/reports')(pool));
   app.use('/api', require('./routes/cash')(pool));
   app.use('/api', require('./routes/dashboard')(pool));
+  app.use('/api', require('./routes/recon')(pool));
+  app.use('/api', require('./routes/finance')(pool));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak ada' }));
 
   // DIST_DIR: server uji Claude memakai build terpisah (dist-uitest) supaya tidak menimpa app user yang sedang jalan.

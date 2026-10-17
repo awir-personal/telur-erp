@@ -9,3 +9,8 @@ import './index.css';
 ReactDOM.createRoot(document.getElementById('root')).render(
   <ThemeProvider><ConfirmProvider><BrowserRouter><App /></BrowserRouter></ConfirmProvider></ThemeProvider>,
 );
+
+// PWA: daftarkan service worker hanya di build produksi (bukan saat npm run dev).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}

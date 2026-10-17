@@ -221,6 +221,45 @@ const MIGRATIONS = [
       ('pemasukan','Pendapatan Lain'),('pemasukan','Bunga Bank'),('modal','Setoran Modal'),('prive','Penarikan Pemilik')`,
     `INSERT IGNORE INTO settings (k, v) VALUES ('company_address',''),('company_phone','')`,
   ]],
+  // v3.0 — rekonsiliasi bank + jurnal memorial.
+  ['003_rekonsiliasi_jurnal', [
+    `CREATE TABLE IF NOT EXISTS bank_lines (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      account_id INT NOT NULL,
+      date DATE NOT NULL,
+      description VARCHAR(500) NOT NULL DEFAULT '',
+      amount DECIMAL(15,2) NOT NULL,
+      balance DECIMAL(15,2) NULL,
+      line_key CHAR(64) NOT NULL,
+      batch VARCHAR(60) NULL,
+      status ENUM('unmatched','matched','ignored') NOT NULL DEFAULT 'unmatched',
+      match_src ENUM('payment','cash') NULL,
+      match_id INT NULL,
+      note VARCHAR(255) NULL,
+      created_by INT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_bank_line (account_id, line_key),
+      KEY ix_bank_date (account_id, date),
+      FOREIGN KEY (account_id) REFERENCES accounts(id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS journal_entries (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      date DATE NOT NULL,
+      memo VARCHAR(255) NOT NULL,
+      created_by INT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY ix_je_date (date)
+    )`,
+    `CREATE TABLE IF NOT EXISTS journal_lines (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      entry_id INT NOT NULL,
+      coa VARCHAR(20) NOT NULL,
+      debit DECIMAL(15,2) NOT NULL DEFAULT 0,
+      credit DECIMAL(15,2) NOT NULL DEFAULT 0,
+      note VARCHAR(255) NULL,
+      FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE
+    )`,
+  ]],
 ];
 
 // ALTER TABLE ADD COLUMN yang aman diulang (MySQL 8 tidak punya ADD COLUMN IF NOT EXISTS).

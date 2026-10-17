@@ -1,7 +1,7 @@
 {
   "name": "telur-erp",
   "productName": "Telur ERP",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "ERP sederhana distribusi telur: penjualan, pembelian, pembayaran multi-invoice, piutang/hutang, margin",
   "private": true,
   "type": "commonjs",
@@ -12,8 +12,9 @@
     "dev": "node scripts/dev.js",
     "build": "vite build",
     "start": "node server/index.js",
-    "test": "node --test --test-concurrency=1 test/calc.test.js test/migrate.test.js test/api.test.js",
-    "reset-master": "node scripts/reset-master.js"
+    "test": "node --test --test-concurrency=1 test/calc.test.js test/bank.test.js test/migrate.test.js test/api.test.js",
+    "reset-master": "node scripts/reset-master.js",
+    "restore": "node scripts/restore.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

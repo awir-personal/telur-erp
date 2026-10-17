@@ -4,21 +4,28 @@ import { get, qs } from '../api';
 import { ErrorBox, PageTitle, useLoad } from '../components/ui';
 import { addDays, qty, rp, tgl, today } from '../format';
 import { downloadXlsx, xlDate } from '../lib/excel';
+import { ProfitLoss, BalanceSheet, CashFlow, Journal, Ledger } from './FinanceReports';
 
-const TABS = [['piutang', 'Umur Piutang'], ['hutang', 'Umur Hutang'], ['margin', 'Margin'], ['stok', 'Info Stok']];
+const TABS = [['piutang', 'Umur Piutang'], ['hutang', 'Umur Hutang'], ['margin', 'Margin'], ['stok', 'Info Stok'],
+  ['labarugi', 'Laba Rugi'], ['neraca', 'Neraca'], ['aruskas', 'Arus Kas'], ['jurnal', 'Jurnal'], ['bukubesar', 'Buku Besar']];
 
 export default function ReportsPage() {
   const [tab, setTab] = useState('piutang');
   return (
     <div>
       <PageTitle>Laporan</PageTitle>
-      <div className="mb-3 flex gap-1 overflow-x-auto border-b">
+      <div className="no-print mb-3 flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map(([k, v]) => <button key={k} className={`whitespace-nowrap px-3 py-1.5 text-sm ${tab === k ? 'border-b-2 border-brand-600 font-semibold' : 'text-slate-600'}`} onClick={() => setTab(k)}>{v}</button>)}
       </div>
       {tab === 'piutang' && <Aging kind="sale" />}
       {tab === 'hutang' && <Aging kind="purchase" />}
       {tab === 'margin' && <Margin />}
       {tab === 'stok' && <Stock />}
+      {tab === 'labarugi' && <ProfitLoss />}
+      {tab === 'neraca' && <BalanceSheet />}
+      {tab === 'aruskas' && <CashFlow />}
+      {tab === 'jurnal' && <Journal />}
+      {tab === 'bukubesar' && <Ledger />}
     </div>
   );
 }

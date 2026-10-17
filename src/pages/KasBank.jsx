@@ -4,8 +4,9 @@ import { ErrorBox, Field, Modal, NumInput, PageTitle, useAction, useAuth, useLoa
 import { useConfirm } from '../lib/confirm';
 import { downloadXlsx, xlDate } from '../lib/excel';
 import { firstOfMonth, rp, tgl, today } from '../format';
+import Recon from './Recon';
 
-const TABS = [['saldo', 'Saldo & Buku Rekening'], ['txn', 'Biaya / Pemasukan / Transfer'], ['master', 'Rekening & Kategori']];
+const TABS = [['saldo', 'Saldo & Buku Rekening'], ['txn', 'Biaya / Pemasukan / Transfer'], ['rekon', 'Rekonsiliasi Bank'], ['master', 'Rekening & Kategori']];
 const KIND = { biaya: 'Biaya', pemasukan: 'Pemasukan lain', modal: 'Setoran modal', prive: 'Penarikan pemilik', transfer: 'Transfer antar rekening' };
 const OUT = ['biaya', 'prive'];
 
@@ -19,6 +20,7 @@ export default function KasBank() {
       </div>
       {tab === 'saldo' && <Saldo />}
       {tab === 'txn' && <Txns />}
+      {tab === 'rekon' && <Recon embedded />}
       {tab === 'master' && <Master />}
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { get, put } from '../api';
+import { get, put, getToken } from '../api';
 import { ErrorBox, Field, NumInput, PageTitle, useAction, useAuth, useLoad } from '../components/ui';
 import { ChangePinForm } from './Login';
 import { waktu } from '../format';
@@ -13,6 +13,7 @@ export default function SettingsPage() {
       <div className="grid gap-3 md:grid-cols-2">
         <div className="card"><h3 className="mb-2 font-semibold">Ganti PIN saya</h3><ChangePinForm /></div>
         {isMaster && <General />}
+        {isMaster && <Backup />}
       </div>
       {isMaster && <Logs />}
     </div>
@@ -42,7 +43,33 @@ function General() {
   );
 }
 
-const ACTION = { login: 'Login', setup: 'Setup awal', create: 'Buat', update: 'Ubah', delete: 'Hapus', adjust: 'Penyesuaian', delete_adjust: 'Hapus penyesuaian', diff_note: 'Justifikasi selisih', reset_pin: 'Reset PIN', change_pin: 'Ganti PIN', locked: 'Terkunci (salah PIN)', import: 'Import', update_prices: 'Ubah harga khusus' };
+function Backup() {
+  const a = useAction();
+  const [done, setDone] = useState(null);
+  const run = () => a.run(async () => {
+    const res = await fetch('/api/backup', { headers: { authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Backup gagal');
+    const blob = await res.blob();
+    const name = (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'telur-erp-backup.json.gz';
+    const url = URL.createObjectURL(blob);
+    const el = Object.assign(document.createElement('a'), { href: url, download: name });
+    el.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    setDone(`${name} (${Math.round(blob.size / 1024)} KB)`);
+  });
+  return (
+    <div className="card space-y-2 md:col-span-2">
+      <h3 className="font-semibold">Backup database</h3>
+      <p className="text-sm text-slate-600">Unduh semua data (transaksi, master, user, log) ke satu file. Simpan di tempat aman (Google Drive, flashdisk). Disarankan minimal seminggu sekali; Dashboard akan mengingatkan.</p>
+      <p className="text-xs text-slate-500">Memulihkan: di server/PC baru jalankan <code>npm run restore -- "nama-file.json.gz"</code> ke database yang masih kosong. Restore sengaja menolak database yang sudah berisi data, supaya data asli tidak pernah tertimpa.</p>
+      <ErrorBox error={a.error} />
+      {done && <p className="text-sm text-green-700">Tersimpan: {done}</p>}
+      <button className="btn-primary" onClick={run} disabled={a.busy}>⬇ Unduh backup sekarang</button>
+    </div>
+  );
+}
+
+const ACTION = { login: 'Login', setup: 'Setup awal', create: 'Buat', update: 'Ubah', delete: 'Hapus', adjust: 'Penyesuaian', delete_adjust: 'Hapus penyesuaian', diff_note: 'Justifikasi selisih', reset_pin: 'Reset PIN', change_pin: 'Ganti PIN', locked: 'Terkunci (salah PIN)', import: 'Import', update_prices: 'Ubah harga khusus', backup: 'Backup', recon_match: 'Cocokkan mutasi', recon_unmatch: 'Batal cocok mutasi', recon_ignore: 'Abaikan mutasi' };
 
 function Logs() {
   const logs = useLoad(() => get('/logs?limit=300'), []);

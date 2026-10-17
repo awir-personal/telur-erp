@@ -98,6 +98,8 @@ module.exports = function paymentRoutes(pool) {
   r.delete('/payments/:id', requirePerm('payment'), async (req, res) => {
     const [p] = await listPayments(pool, 'p.id = ?', [req.params.id]);
     if (!p) throw new HttpError(404, 'Pembayaran tidak ditemukan');
+    const [[rec]] = await pool.query("SELECT id FROM bank_lines WHERE match_src = 'payment' AND match_id = ? AND status = 'matched'", [p.id]);
+    if (rec) throw bad('Pembayaran ini sudah dicocokkan di rekonsiliasi bank. Batalkan cocoknya dulu.');
     await pool.query('DELETE FROM payments WHERE id = ?', [p.id]);
     await log(pool, req.user, 'delete', `payment_${p.kind}`, p.id, { date: p.date, party: p.party_name, amount: p.amount, method: p.method });
     res.json({ ok: true });

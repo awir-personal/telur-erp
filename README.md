@@ -1,6 +1,10 @@
 # Telur ERP
 
-ERP sederhana untuk distributor telur: penjualan (format sama dengan sheet lama), pembelian, pembayaran multi-invoice, selisih & pembulatan, umur piutang/hutang, margin, info stok, master data, master user (nama + PIN), log aktivitas, import sheet lama.
+ERP sederhana untuk distributor telur. Versi tampil di pojok kiri bawah (vX.Y), seperti app lain.
+
+- **v1**: penjualan (format sama dengan sheet lama), pembelian, pembayaran multi-invoice, selisih & pembulatan, umur piutang/hutang, margin, info stok, master data, master user (nama + PIN), log aktivitas, import sheet lama.
+- **v2**: Dashboard, cetak/PDF invoice, export Excel, Kas & Bank (rekening, biaya, pemasukan, modal, prive, transfer, buku rekening).
+- **v3**: rekonsiliasi bank (impor mutasi BCA / BNI / Mandiri / Laporan Arus Kas / pemetaan manual), jurnal otomatis + jurnal memorial, Laba Rugi (HPP periodik + kontrol), Neraca, Arus Kas, Buku Besar, backup & restore, PWA (install di HP), siap Railway.
 
 Web app (Node + Express + React + MySQL). Jalan di localhost dulu, nanti di-hosting di Railway seperti Mahjong Online.
 
@@ -30,7 +34,7 @@ Supaya bisa dibuka dari HP di Wi-Fi yang sama: tambahkan `HOST=0.0.0.0` di `.env
 |---|---|
 | Master | Semua + kelola user (buat, nonaktifkan, reset PIN), pengaturan, log aktivitas |
 | Admin | Buat/ubah invoice penjualan & nota pembelian, master data, import |
-| Finance | Catat/validasi pembayaran, retur/susut/diskon, pembulatan, justifikasi selisih |
+| Finance | Catat/validasi pembayaran, retur/susut/diskon, pembulatan, justifikasi selisih, Kas & Bank, rekonsiliasi, jurnal memorial |
 
 PIN disimpan dalam bentuk hash. Tidak ada yang bisa melihat PIN siapa pun, termasuk master. Master hanya bisa reset: sistem membuat PIN sementara yang tampil sekali, dan user wajib menggantinya saat login. Salah PIN 5x membuat user terkunci 15 menit.
 
@@ -46,6 +50,14 @@ npm run reset-master -- "Nama Master"
 npm test
 ```
 
-Butuh MySQL menyala. Tes membuat & menghapus database sendiri (`telur_erp_test_zz`), tidak menyentuh `telur_erp_db`.
+Butuh MySQL menyala. Tes membuat & menghapus database sendiri (`telur_erp_test_zz`, `telur_erp_migtest_zz`, `telur_erp_restoretest_zz`), tidak menyentuh `telur_erp_db`.
+
+## Backup & restore
+
+Pengaturan → **Unduh backup sekarang** (khusus master). Untuk memulihkan ke database **kosong**:
+
+```bash
+npm.cmd run restore -- "telur-erp-backup-2026-10-17.json.gz"
+```
 
 Deploy ke server: lihat [DEPLOY.md](DEPLOY.md). Detail desain: [PROJECT_BRIEF.md](PROJECT_BRIEF.md).

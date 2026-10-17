@@ -51,9 +51,23 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 - Export Excel di browser (`src/lib/excel.js`): angka tetap angka, tanggal jadi sel tanggal asli (format d-mmm-yy). Export Penjualan/Pembelian memakai susunan sheet lama (2 baris header + merge).
 - Cetak invoice: `/invoice/:id/cetak` → `window.print()` (PDF lewat "Simpan sebagai PDF"). Data perusahaan (nama, alamat, telepon) diatur di Pengaturan.
 
+### Rekonsiliasi bank (v3.0, migrasi `003_rekonsiliasi_jurnal`)
+- `server/bankParser.js` (murni): deteksi baris header dari sinonim (Tanggal/Post Date, Keterangan/Description, Debet/Debit, Kredit/Credit, Jumlah + DB/CR, Saldo/Balance). Angka fleksibel (1.234,56 / 1,234.56 / "x CR"). Tanggal: serial Excel, D/M/Y, "02 Jan 2026", "dd/mm" tanpa tahun (KlikBCA, pakai opsi tahun). Kolom DB/CR tanpa judul di kanan "Jumlah" dikenali dari isinya. Baris tanpa nominal = lanjutan keterangan baris sebelumnya.
+- **Arah Debet ditentukan dari kolom saldo** (`debet_keluar` = standar mutasi bank vs `debet_masuk` = buku kas sendiri). File "Laporan Arus Kas 2025 (BCA/BNI)" milik user di `DownloadsAPG`: header baris 3, kolom Tanggal(0) Keterangan(1) Debet(3) Kredit(4) Saldo(5), kolom 2 = rincian (diabaikan). Debet = KELUAR, saldo cocok 100% (BCA 20/20, BNI 153/153). Hanya STRUKTUR file yang pernah dibaca, isinya tidak pernah disalin.
+- `bank_lines` unik per (rekening, sha256(tgl|ket|nominal|saldo|urutan)), jadi impor ulang tidak dobel. Transaksi identik di satu file dibedakan dengan nomor urut.
+- Auto-cocok: nominal sama persis, tanggal ±3 hari, hanya transaksi yang rekeningnya SUDAH rekening itu. Kalau ragu (dua kandidat sama dekat), dilewati. Cocok manual ke pembayaran tanpa rekening otomatis mengisi rekeningnya. Dari baris mutasi bisa langsung dibuat biaya/pemasukan/modal/prive. Transaksi yang sudah cocok tidak bisa dihapus.
+
+### Jurnal & laporan keuangan (v3.0, `server/journal.js`)
+- Jurnal **diturunkan dari transaksi** (tidak disimpan) + jurnal memorial manual (`journal_entries/lines`, wajib seimbang). Bagan akun: tetap (`FIXED`) + `1101-<rekening>` + `6-<kategori biaya>` + `42-<kategori pemasukan>`.
+- Invoice jual Dr 1201/Cr 4101 · beli Dr 5101/Cr 2101 · penyesuaian ke 4102/5102 · penerimaan Dr kas, Cr 1201 (teralokasi) + 2201 Uang Muka Pelanggan (sisa) · bayar supplier Dr 2101 + 1401 (sisa) / Cr kas · kas tanpa rekening = 1102 · saldo awal rekening Dr kas / Cr 3301.
+- **Mutasi kas sebelum tanggal saldo awal rekening → sisi kas ke 3301** (aturan sama dengan Kas & Bank; ditemukan oleh tes saat saldo jurnal BCA beda 999 dari Kas & Bank).
+- Persediaan (estimasi) = sisa qty per barang (satuan dinormalkan ke kg bila bisa) × harga beli rata-rata 60 hari (cadangan: semua pembelian). Stok negatif dinilai 0 dan diperingatkan. HPP periodik = pembelian − retur pembelian + persediaan awal − persediaan akhir. Neraca memasukkan nilai persediaan + laba kumulatif, dengan selisih ditampilkan (harus 0, dites).
+- Backup: `GET /api/backup` (master) → `.json.gz` semua tabel kecuali sesi, mencatat `settings.last_backup_at` (Dashboard mengingatkan bila lebih dari 7 hari). Restore `npm run restore -- file` hanya ke DB tanpa user/invoice. Uji bolak-balik: neraca DB asal = neraca DB hasil restore.
+- PWA: `public/manifest.webmanifest`, `public/sw.js` (tidak pernah cache `/api`), ikon dibuat oleh `scripts/make-icons.js` (PNG tanpa library). Railway: `railway.json`.
+
 ## 4. Hak akses (server/auth.js `PERMS`)
 
-master = semua. admin = invoice, master, import, note, view. finance = payment, adjust, note, view, cash (Kas & Bank). Kelola user, pengaturan, dan log = khusus role master.
+master = semua. admin = invoice, master, import, note, view. finance = payment, adjust, note, view, cash (Kas & Bank, rekonsiliasi, jurnal memorial). Backup = khusus master. Kelola user, pengaturan, dan log = khusus role master.
 
 ## 5. Import (server/importer.js)
 
@@ -69,7 +83,7 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 
 - `npm run dev` → API :3200 (`node --watch`) + Vite :5180. `scripts/dev.js --db=nama` memakai DB lain.
 - Preview di sesi Claude: config `telur-erp` / `telur-erp-uitest` (DB `telur_erp_uitest_zz`) di `C:\Users\Han\Downloads\Claude\.claude\launch.json`. **Uji UI selalu di DB uitest**, jangan di `telur_erp_db`. DB uitest dihapus setelah selesai.
-- `npm test` = 19 tes (logika murni + alur API penuh di DB `telur_erp_test_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
+- `npm test` = 31 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
 - Sudah di-mutation-test: 13/14 mutasi tertangkap. Satu yang lolos (EPS di status lunas) adalah mutan ekuivalen karena `outstanding` sudah di-round2.
 
 ## 7. Jebakan yang sudah ditemui
@@ -90,7 +104,8 @@ Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat in
 
 ## 9. Riwayat versi
 
-- **2.0.0 (2026-10-17)**: Dashboard (halaman awal: penjualan hari/bulan ini, margin, piutang lewat jatuh tempo, daftar hal yang perlu ditindaklanjuti, saldo kas), cetak/PDF invoice, export Excel (Penjualan/Pembelian format sheet lama, umur piutang/hutang, buku rekening), Kas & Bank (rekening, biaya/pemasukan/modal/prive/transfer, buku mutasi + saldo berjalan, rekening opsional di pembayaran). 23 tes; 7/7 mutasi baru tertangkap.
+- **3.0.0 (2026-10-17)**: rekonsiliasi bank (BCA/BNI/Mandiri/Arus Kas/manual), jurnal otomatis + memorial, Laba Rugi (HPP periodik + kontrol vs harga beli ketikan), Neraca, Arus Kas, Buku Besar, backup & restore, PWA, `railway.json`. 31 tes, 15/15 mutasi v3 tertangkap (setelah 4 tes tambahan). Migrasi 002+003 diuji pada SALINAN telur_erp_db: hanya menambah tabel, data lama utuh, neraca seimbang, DB asli tidak berubah. Diverifikasi di browser: impor CSV gaya KlikBCA → 2 cocok otomatis → biaya admin dibuat dari baris mutasi → saldo bank = sistem; neraca seimbang; laba rugi menandai selisih HPP.
+- **2.0.0 (2026-10-17)**: Dashboard (halaman awal: penjualan hari/bulan ini, margin, piutang lewat jatuh tempo, daftar hal yang perlu ditindaklanjuti, saldo kas), cetak/PDF invoice, export Excel (Penjualan/Pembelian format sheet lama, umur piutang/hutang, buku rekening), Kas & Bank (rekening, biaya/pemasukan/modal/prive/transfer, buku mutasi + saldo berjalan, rekening opsional di pembayaran). 21 tes; 7/7 mutasi baru tertangkap.
 
 - **1.2.0 (2026-10-17)**: tampilan disamakan dengan app lain (lihat bagian 1), versi vX.Y di pojok, mode gelap, dialog konfirmasi sendiri. Bug: invoice dengan harga kosong (total 0) tertulis "Lunas", sekarang "Belum bayar". Server uji Claude dipindah ke port 3299 + `dist-uitest` + DB `telur_erp_uitest_zz` (`scripts/uitest.js`), karena user menjalankan app aslinya di 3200 bersamaan.
 

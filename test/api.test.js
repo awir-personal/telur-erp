@@ -302,6 +302,141 @@ test('v2 dashboard: piutang lewat jatuh tempo, hal yang perlu ditindaklanjuti, s
   assert.equal(d.cash.find((c) => c.id === S.bca).balance, 1175000);
 });
 
+test('v3 rekonsiliasi bank: impor, auto-cocok, cocok manual (isi rekening), buat biaya dari mutasi, saldo sama', async () => {
+  const pay7000 = (await ok(call('GET', `/payments?kind=sale&party_id=${S.cust}`, null, S.fin))).find((p) => p.amount === 7000 && !p.account_id);
+  assert.ok(pay7000);
+  const rows = [
+    ['Post Date', 'Description', 'Debit', 'Credit', 'Balance'],
+    ['02/03/2099', 'TRF MASUK TOKO UJI', '0.00', '500,000.00', '1,500,000.00'],
+    ['02/03/2099', 'SETOR TUNAI', '0.00', '7,000.00', '1,507,000.00'],
+    ['03/03/2099', 'TRF KE PETERNAK', '200,000.00', '0.00', '1,307,000.00'],
+    ['04/03/2099', 'ONGKIR', '25,000.00', '0.00', '1,282,000.00'],
+    ['05/03/2099', 'PINDAH KE KAS', '100,000.00', '0.00', '1,182,000.00'],
+    ['06/03/2099', 'BIAYA ADM', '6,500.00', '0.00', '1,175,500.00'],
+  ];
+  assert.equal((await call('POST', '/recon/import', { account_id: S.bca, rows }, S.admin)).status, 403);
+  const prev = await ok(call('POST', '/recon/preview', { account_id: S.bca, rows }, S.fin));
+  assert.equal(prev.lines.length, 6);
+  assert.equal(prev.direction, 'debet_keluar');
+  const imp = await ok(call('POST', '/recon/import', { account_id: S.bca, rows }, S.fin));
+  assert.deepEqual([imp.inserted, imp.autoMatched], [6, 4]);
+  const again = await ok(call('POST', '/recon/import', { account_id: S.bca, rows }, S.fin));
+  assert.deepEqual([again.inserted, again.duplicates], [0, 6]);
+
+  const lines = await ok(call('GET', `/recon/lines?account_id=${S.bca}`, null, S.fin));
+  const setor = lines.find((l) => l.description === 'SETOR TUNAI');
+  const adm = lines.find((l) => l.description === 'BIAYA ADM');
+  assert.equal(setor.status, 'unmatched'); // pembayaran tanpa rekening tidak dicocokkan otomatis
+  const cand = await ok(call('GET', `/recon/candidates?line_id=${setor.id}`, null, S.fin));
+  assert.ok(cand.exact.some((c) => c.src === 'payment' && c.id === pay7000.id && c.assigned === false));
+  // arah berbeda ditolak
+  const out = lines.find((l) => l.description === 'ONGKIR');
+  assert.equal((await call('POST', `/recon/lines/${out.id}/unmatch`, {}, S.fin)).status, 200);
+  assert.equal((await call('POST', `/recon/lines/${out.id}/match`, { src: 'payment', id: pay7000.id }, S.fin)).status, 400);
+  await ok(call('POST', '/recon/auto-match', { account_id: S.bca }, S.fin)); // ongkir dicocokkan lagi
+  await ok(call('POST', `/recon/lines/${setor.id}/match`, { src: 'payment', id: pay7000.id }, S.fin));
+  assert.equal((await ok(call('GET', `/payments/${pay7000.id}`, null, S.fin))).account_id, S.bca); // rekening terisi otomatis
+
+  const cats = await ok(call('GET', '/cash/categories', null, S.fin));
+  const adminBank = cats.find((c) => c.name === 'Biaya Bank');
+  assert.equal((await call('POST', `/recon/lines/${adm.id}/create-cash`, { category_id: cats.find((c) => c.kind === 'pemasukan').id }, S.fin)).status, 400);
+  const created = await ok(call('POST', `/recon/lines/${adm.id}/create-cash`, { category_id: adminBank.id }, S.fin));
+  assert.equal((await call('DELETE', `/cash/txns/${created.id}`, null, S.fin)).status, 400); // sudah direkonsiliasi
+
+  assert.equal((await call('DELETE', `/payments/${pay7000.id}`, null, S.fin)).status, 400); // sudah direkonsiliasi
+
+  const sum = await ok(call('GET', `/recon/summary?account_id=${S.bca}`, null, S.fin));
+  assert.equal(sum.statement.balance, 1175500);
+  assert.equal(sum.system.balance, 1175500);
+  assert.equal(sum.difference, 0);
+  assert.equal(sum.counts.matched.n, 6);
+  assert.equal(sum.counts.unmatched, undefined);
+  assert.equal((await call('POST', `/recon/lines/${adm.id}/ignore`, {}, S.fin)).status, 400); // alasan wajib
+
+  // Ragu: dua biaya 12.345 berjarak sama dari mutasi → tidak dicocokkan otomatis.
+  const lain = cats.find((c) => c.name === 'Lain-lain');
+  await ok(call('POST', '/cash/txns', { kind: 'biaya', date: '2099-03-09', account_id: S.bca, category_id: lain.id, amount: 12345 }, S.fin));
+  await ok(call('POST', '/cash/txns', { kind: 'biaya', date: '2099-03-11', account_id: S.bca, category_id: lain.id, amount: 12345 }, S.fin));
+  const imp2 = await ok(call('POST', '/recon/import', { account_id: S.bca, rows: [['Post Date', 'Description', 'Debit', 'Credit'], ['10/03/2099', 'DUA KANDIDAT', '12,345.00', '0.00']] }, S.fin));
+  assert.deepEqual([imp2.inserted, imp2.autoMatched], [1, 0]);
+});
+
+test('v3 laporan keuangan: neraca seimbang, HPP periodik dengan nilai persediaan, jurnal memorial', async () => {
+  // Barang baru: beli 100 kg @25.000, jual 40 kg → sisa 60 kg bernilai 1.500.000
+  const it = await ok(call('POST', '/items', { name: 'Telor Uji 2099', default_unit_id: S.kg, sort_order: 999 }, S.admin));
+  await ok(call('POST', '/invoices', { kind: 'purchase', date: '2099-04-01', party_id: S.supp, lines: [{ item_id: it.id, unit_id: S.kg, qty: 100, price: 25000 }] }, S.admin));
+  await ok(call('POST', '/invoices', { kind: 'sale', date: '2099-04-02', party_id: S.cust, lines: [{ item_id: it.id, unit_id: S.kg, qty: 40, price: 30000, cost_price: 25000 }] }, S.admin));
+  const pl = await ok(call('GET', '/reports/profit-loss?from=2099-04-01&to=2099-04-30', null, S.fin));
+  assert.equal(pl.purchases, 2500000);
+  assert.equal(pl.inventory.find((x) => x.item === 'Telor Uji 2099').value, 1500000);
+  assert.equal(pl.hpp, pl.purchases - pl.purchAdj + pl.invStart - pl.invEnd);
+  assert.equal(pl.netIncome, pl.gross + pl.totalOther - pl.totalExp);
+  assert.equal(pl.control.hppTyped, 1000000); // 40 kg × 25.000
+  assert.equal(pl.sales, 1200000);
+  // Telor Curah dijual jauh lebih banyak dari yang dibeli → stok negatif dinilai 0, bukan minus.
+  const curah = pl.inventory.find((x) => x.item === 'Telor Curah');
+  assert.ok(curah.negative && curah.qty < 0);
+  assert.equal(curah.value, 0);
+
+  const bs = await ok(call('GET', '/reports/balance-sheet?as_of=2099-12-31', null, S.fin));
+  assert.equal(bs.difference, 0);
+  assert.equal(bs.unknown.length, 0);
+  assert.equal(bs.assets.find((a) => a.code === `1101-${S.bca}`).amount, 1175500 - 12345 * 2);
+  // Uang Muka Pelanggan = sisa penerimaan customer yang belum dialokasikan.
+  const pays = await ok(call('GET', '/payments?kind=sale', null, S.fin));
+  const unalloc = pays.reduce((s, p) => s + p.unallocated, 0);
+  assert.ok(unalloc > 0);
+  assert.equal(bs.liabilities.find((x) => x.code === '2201').amount, Math.round(unalloc * 100) / 100);
+  const tb = await ok(call('GET', '/reports/ledger?from=2099-01-01&to=2099-12-31', null, S.fin));
+  assert.equal(tb.totals.debit, tb.totals.credit);
+
+  // Jurnal memorial: tidak seimbang ditolak; seimbang masuk & neraca tetap seimbang
+  const coa = await ok(call('GET', '/coa', null, S.fin));
+  const exp = coa.find((c) => c.group === 'biaya').code;
+  assert.equal((await call('POST', '/journals', { date: '2099-04-30', memo: 'x', lines: [{ coa: exp, debit: 100 }, { coa: '3101', credit: 90 }] }, S.fin)).status, 400);
+  assert.equal((await call('POST', '/journals', { date: '2099-04-30', memo: 'x', lines: [{ coa: 'ngawur', debit: 100 }, { coa: '3101', credit: 100 }] }, S.fin)).status, 400);
+  await ok(call('POST', '/journals', { date: '2099-04-30', memo: 'Penyusutan timbangan', lines: [{ coa: exp, debit: 50000 }, { coa: '3101', credit: 50000 }] }, S.fin));
+  const bs2 = await ok(call('GET', '/reports/balance-sheet?as_of=2099-12-31', null, S.fin));
+  assert.equal(bs2.difference, 0);
+  const j = await ok(call('GET', '/reports/journal?from=2099-04-30&to=2099-04-30', null, S.fin));
+  assert.ok(j.entries.some((e) => e.src === 'manual' && e.memo === 'Penyusutan timbangan'));
+  for (const e of (await ok(call('GET', '/reports/journal?from=2099-01-01&to=2099-12-31', null, S.fin))).entries) {
+    const d = e.lines.reduce((s, l) => s + l.debit, 0);
+    const c = e.lines.reduce((s, l) => s + l.credit, 0);
+    assert.ok(Math.abs(d - c) < 0.005, `jurnal tidak seimbang: ${e.memo}`);
+  }
+  const cf = await ok(call('GET', '/reports/cashflow?from=2099-03-01&to=2099-03-31', null, S.fin));
+  assert.ok(cf.rows.some((x) => x.label === 'Penerimaan dari customer'));
+});
+
+test('v3 backup → restore ke database kosong menghasilkan laporan yang sama', async () => {
+  assert.equal((await call('GET', '/backup', null, S.fin)).status, 403);
+  const res = await fetch(base + '/backup', { headers: { authorization: `Bearer ${S.master}` } });
+  assert.equal(res.status, 200);
+  const file = require('path').join(require('os').tmpdir(), `telur-backup-test-${process.pid}.json.gz`);
+  require('fs').writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  const { restore } = require('../scripts/restore');
+  const RDB = 'telur_erp_restoretest_zz';
+  const drop = async () => { const c = await mysql.createConnection({ ...connConfig(RDB), database: undefined }); await c.query(`DROP DATABASE IF EXISTS \`${RDB}\``); await c.end(); };
+  await drop();
+  const rpool = await createPool(RDB);
+  try {
+    const r = await restore(rpool, file);
+    assert.ok(r.counts.invoices > 20);
+    await assert.rejects(restore(rpool, file), /tidak kosong/); // tidak pernah menimpa database berisi
+    const J = require('../server/journal');
+    const a = await J.balanceSheet(pool, '2099-12-31');
+    const b = await J.balanceSheet(rpool, '2099-12-31');
+    assert.deepEqual([b.totalAssets, b.totalLE, b.difference], [a.totalAssets, a.totalLE, a.difference]);
+    const d = await ok(call('GET', '/dashboard?today=2099-03-31', null, S.master));
+    assert.ok(d.lastBackupAt);
+  } finally {
+    await rpool.end();
+    await drop();
+    require('fs').rmSync(file, { force: true });
+  }
+});
+
 test('log aktivitas mencatat siapa melakukan apa, tanpa PIN', async () => {
   const logs = await ok(call('GET', '/logs?limit=500', null, S.master));
   const actions = new Set(logs.map((l) => l.action));

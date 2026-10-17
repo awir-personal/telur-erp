@@ -178,6 +178,8 @@ module.exports = function cashRoutes(pool) {
   r.delete('/cash/txns/:id', W, async (req, res) => {
     const [[old]] = await pool.query('SELECT * FROM cash_txns WHERE id = ?', [req.params.id]);
     if (!old) throw new HttpError(404, 'Transaksi tidak ditemukan');
+    const [[rec]] = await pool.query("SELECT id FROM bank_lines WHERE match_src = 'cash' AND match_id = ? AND status = 'matched'", [old.id]);
+    if (rec) throw bad('Transaksi ini sudah dicocokkan di rekonsiliasi bank. Batalkan cocoknya dulu.');
     await pool.query('DELETE FROM cash_txns WHERE id = ?', [old.id]);
     await log(pool, req.user, 'delete', `cash_${old.kind}`, old.id, { date: old.date, amount: old.amount, account_id: old.account_id, note: old.note });
     res.json({ ok: true });
