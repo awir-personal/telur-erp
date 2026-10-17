@@ -71,7 +71,7 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 
 - PowerShell user memblokir `npm.ps1` ("running scripts is disabled"). Pakai `npm.cmd` atau `Jalankan Telur ERP.bat` (build + start di :3200, browser dibuka server saat siap lewat `OPEN_BROWSER=1`).
 - `node --watch` tetap hidup walaupun server crash, dan Vite tetap melayani dengan proxy 500. Karena itu `.bat` untuk user memakai mode start biasa, dan `scripts/dev.js` mematikan seluruh pohon proses (`taskkill /T`) kalau salah satu proses mati.
-- `preview_stop` bisa meninggalkan Vite yatim di :5180. Sebelum selesai, cek `Get-NetTCPConnection -LocalPort 3200,5180`.
+- `preview_stop` bisa meninggalkan Vite yatim di :5180. Tapi proses di :3200/:5180 BELUM TENTU milik sesi Claude: user menjalankan .bat secara paralel. Matikan hanya PID yang Anda start sendiri. Penyebab DB setengah jadi di v1.0.1 adalah cleanup berbasis pola nama yang ikut membunuh server user di tengah migrasi.
 
 ## 8. Ide berikutnya (belum diminta)
 
