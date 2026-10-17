@@ -253,7 +253,7 @@ function LineModal({ line, onClose, onDone }) {
                 <input className="inp max-w-xs" placeholder="keterangan (opsional)" value={note} onChange={(e) => setNote(e.target.value)} />
                 <button className="btn-primary" disabled={!cat || a.busy} onClick={() => act(() => post(`/recon/lines/${line.id}/create-cash`, { category_id: cat, note }))}>Buat & cocokkan</button>
               </div>
-              <p className="mt-1 text-xs text-slate-500">Untuk penerimaan customer / bayar supplier, catat dulu di menu Penerimaan / Bayar Supplier, lalu cocokkan di sini.</p>
+              <p className="mt-1 text-xs text-slate-500">Untuk penerimaan customer / bayar supplier, catat dulu di menu Uang Masuk / Uang Keluar, lalu cocokkan di sini.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <input className="inp max-w-xs" placeholder="alasan diabaikan (mis. bunga sudah dicatat)" value={note} onChange={(e) => setNote(e.target.value)} />

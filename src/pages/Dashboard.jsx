@@ -25,8 +25,8 @@ export default function Dashboard() {
     x.todo.diffOpen > 0 && [`${x.todo.diffOpen} invoice punya selisih total sheet yang belum dijustifikasi`, '/penjualan'],
     x.todo.zeroPrice > 0 && [`${x.todo.zeroPrice} invoice/nota dengan harga kosong`, '/penjualan'],
     x.todo.overpaid > 0 && [`${x.todo.overpaid} invoice/nota lebih bayar`, '/penjualan'],
-    x.todo.unallocatedSale > 0 && [`Penerimaan Rp ${rp(x.todo.unallocatedSale)} belum dialokasikan ke invoice`, '/penerimaan'],
-    x.todo.unallocatedPurchase > 0 && [`Pembayaran supplier Rp ${rp(x.todo.unallocatedPurchase)} belum dialokasikan`, '/pembayaran'],
+    x.todo.unallocatedSale > 0 && [`Uang masuk Rp ${rp(x.todo.unallocatedSale)} belum dialokasikan ke invoice`, '/uang-masuk'],
+    x.todo.unallocatedPurchase > 0 && [`Uang keluar ke supplier Rp ${rp(x.todo.unallocatedPurchase)} belum dialokasikan`, '/uang-keluar'],
     x.payable.dueSoonCount > 0 && [`${x.payable.dueSoonCount} nota supplier jatuh tempo ≤ 7 hari (Rp ${rp(x.payable.dueSoon)})`, '/laporan'],
     user.role === 'master' && (!x.lastBackupAt || (Date.now() - Date.parse(x.lastBackupAt)) / 86400000 > 7) &&
       [x.lastBackupAt ? `Backup terakhir ${tgl(x.lastBackupAt.slice(0, 10))}, sudah lebih dari 7 hari` : 'Belum pernah backup database', '/pengaturan'],

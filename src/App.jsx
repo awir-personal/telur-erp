@@ -20,10 +20,10 @@ import InvoicePrint from './pages/InvoicePrint';
 const ROLE = { master: 'Master', admin: 'Admin', finance: 'Finance' };
 
 // Versi di pojok kiri bawah, format vX.Y — sama seperti semua app lain.
+// Dulu dibaca dari /api/version: server lama yang belum punya endpoint itu menjawab 401 → tampil "v?"
+// dan bisa memicu logout. Sekarang versi ditanam saat build (vite.config.js → __APP_VERSION__).
 export function VersionFooter() {
-  const [v, setV] = useState('v?');
-  useEffect(() => { get('/version').then((r) => setV(formatVersion(r.version)), () => {}); }, []);
-  return <div className="no-print pointer-events-none fixed bottom-2 left-3 select-none text-[11px] text-slate-400 dark:text-slate-600">{v}</div>;
+  return <div className="no-print pointer-events-none fixed bottom-2 left-3 select-none text-[11px] text-slate-400 dark:text-slate-600">{formatVersion(__APP_VERSION__)}</div>;
 }
 
 export default function App() {
@@ -48,8 +48,8 @@ export default function App() {
     ['/dashboard', 'Dashboard'],
     ['/penjualan', 'Penjualan'],
     ['/pembelian', 'Pembelian'],
-    ['/penerimaan', 'Penerimaan'],
-    ['/pembayaran', 'Bayar Supplier'],
+    ['/uang-masuk', 'Uang Masuk'],
+    ['/uang-keluar', 'Uang Keluar'],
     ['/kas', 'Kas & Bank'],
     ['/laporan', 'Laporan'],
     ['/master', 'Master'],
@@ -93,8 +93,11 @@ export default function App() {
             <Route path="/invoice/:id/cetak" element={<InvoicePrint />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/kas" element={<KasBank />} />
-            <Route path="/penerimaan" element={<PaymentsPage kind="sale" />} />
-            <Route path="/pembayaran" element={<PaymentsPage kind="purchase" />} />
+            <Route path="/uang-masuk" element={<PaymentsPage kind="sale" />} />
+            <Route path="/uang-keluar" element={<PaymentsPage kind="purchase" />} />
+            {/* alamat lama tetap bisa dibuka (bookmark) */}
+            <Route path="/penerimaan" element={<Navigate to="/uang-masuk" replace />} />
+            <Route path="/pembayaran" element={<Navigate to="/uang-keluar" replace />} />
             <Route path="/laporan" element={<ReportsPage />} />
             <Route path="/master" element={<MastersPage />} />
             <Route path="/import" element={<ImportPage />} />

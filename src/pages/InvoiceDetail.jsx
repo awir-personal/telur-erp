@@ -48,7 +48,7 @@ export default function InvoiceDetail() {
   return (
     <div className="space-y-3">
       <PageTitle right={<>
-        {perms.payment && d.outstanding > 0 && <button className="btn-primary" onClick={() => setPayModal({})}>+ Catat pembayaran</button>}
+        {perms.payment && d.outstanding > 0 && <button className="btn-primary" onClick={() => setPayModal({})}>+ Catat {isSale ? 'uang masuk' : 'uang keluar'}</button>}
         <Link className="btn-ghost" to={`/invoice/${id}/cetak`}>🖨 Cetak / PDF</Link>
         {perms.invoice && <Link className="btn-ghost" to={`/invoice/${id}/edit`}>Edit</Link>}
         {perms.invoice && d.paid === 0 && <button className="btn-ghost text-red-600" onClick={removeInvoice}>Hapus</button>}

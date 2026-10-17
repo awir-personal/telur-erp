@@ -104,6 +104,8 @@ Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat in
 
 ## 9. Riwayat versi
 
+- **3.1.0 (2026-10-17)**: menu "Penerimaan" → **Uang Masuk**, "Bayar Supplier" → **Uang Keluar** (permintaan user; alamat lama `/penerimaan` & `/pembayaran` dialihkan otomatis). Halaman Uang Keluar mengingatkan bahwa biaya operasional dicatat di Kas & Bank. Versi di pojok kini ditanam saat build (`__APP_VERSION__` di `vite.config.js`), tidak lagi dari `/api/version`: server lama milik user (start sebelum v1.2) menjawab 401 untuk endpoint itu → tampil "v?" dan bisa memicu logout.
+
 - **3.0.0 (2026-10-17)**: rekonsiliasi bank (BCA/BNI/Mandiri/Arus Kas/manual), jurnal otomatis + memorial, Laba Rugi (HPP periodik + kontrol vs harga beli ketikan), Neraca, Arus Kas, Buku Besar, backup & restore, PWA, `railway.json`. 31 tes, 15/15 mutasi v3 tertangkap (setelah 4 tes tambahan). Migrasi 002+003 diuji pada SALINAN telur_erp_db: hanya menambah tabel, data lama utuh, neraca seimbang, DB asli tidak berubah. Diverifikasi di browser: impor CSV gaya KlikBCA → 2 cocok otomatis → biaya admin dibuat dari baris mutasi → saldo bank = sistem; neraca seimbang; laba rugi menandai selisih HPP.
 - **2.0.0 (2026-10-17)**: Dashboard (halaman awal: penjualan hari/bulan ini, margin, piutang lewat jatuh tempo, daftar hal yang perlu ditindaklanjuti, saldo kas), cetak/PDF invoice, export Excel (Penjualan/Pembelian format sheet lama, umur piutang/hutang, buku rekening), Kas & Bank (rekening, biaya/pemasukan/modal/prive/transfer, buku mutasi + saldo berjalan, rekening opsional di pembayaran). 21 tes; 7/7 mutasi baru tertangkap.
 

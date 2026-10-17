@@ -58,7 +58,7 @@ function Saldo() {
             </button>
           ))}
           <div className="card"><div className="text-xs text-slate-500">Total semua rekening</div><div className="text-xl font-bold">{rp(b.total)}</div>
-            {b.paymentsWithoutAccount.count > 0 && <div className="mt-1 text-[11px] text-amber-700">{b.paymentsWithoutAccount.count} pembayaran belum dipilih rekeningnya (netto {rp(b.paymentsWithoutAccount.net)}). Isi di menu Penerimaan / Bayar Supplier agar saldo akurat.</div>}
+            {b.paymentsWithoutAccount.count > 0 && <div className="mt-1 text-[11px] text-amber-700">{b.paymentsWithoutAccount.count} pembayaran belum dipilih rekeningnya (netto {rp(b.paymentsWithoutAccount.net)}). Isi di menu Uang Masuk / Uang Keluar agar saldo akurat.</div>}
           </div>
         </div>
       )}

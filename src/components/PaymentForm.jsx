@@ -74,7 +74,7 @@ export default function PaymentForm({ kind, paymentId, partyId: initialParty, in
   });
 
   return (
-    <Modal title={`${paymentId ? 'Edit' : 'Catat'} ${isSale ? 'penerimaan dari customer' : 'pembayaran ke supplier'}`} onClose={onClose} wide>
+    <Modal title={`${paymentId ? 'Edit' : 'Catat'} ${isSale ? 'uang masuk dari customer' : 'uang keluar ke supplier'}`} onClose={onClose} wide>
       <form onSubmit={save} className="space-y-3">
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           <Field label="Tanggal bayar"><input type="date" className="inp" value={p.date} onChange={(e) => setP({ ...p, date: e.target.value })} required /></Field>

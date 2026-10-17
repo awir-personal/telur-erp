@@ -14,8 +14,8 @@ export default function PaymentsPage({ kind }) {
 
   return (
     <div>
-      <PageTitle right={perms.payment && <button className="btn-primary" onClick={() => setModal({})}>+ {isSale ? 'Catat penerimaan' : 'Catat pembayaran'}</button>}>
-        {isSale ? 'Penerimaan dari Customer' : 'Pembayaran ke Supplier'}
+      <PageTitle right={perms.payment && <button className="btn-primary" onClick={() => setModal({})}>+ {isSale ? 'Catat uang masuk' : 'Catat uang keluar'}</button>}>
+        {isSale ? 'Uang Masuk' : 'Uang Keluar'} <span className="text-sm font-normal text-slate-500">{isSale ? 'dari customer' : 'ke supplier'}</span>
       </PageTitle>
       <div className="card mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <label><span className="lbl">Dari</span><input type="date" className="inp" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></label>
@@ -42,7 +42,7 @@ export default function PaymentsPage({ kind }) {
             <td className="text-right">{rp(rows.reduce((s, p) => s + p.unallocated, 0))}</td><td colSpan={2} /></tr></tfoot>}
         </table>
       </div>
-      <p className="mt-2 text-xs text-slate-500">Satu pembayaran bisa dibagi ke beberapa invoice, dan satu invoice bisa dibayar beberapa kali. Saldo belum dialokasi bisa dialokasikan nanti lewat klik baris.</p>
+      <p className="mt-2 text-xs text-slate-500">Satu pembayaran bisa dibagi ke beberapa invoice, dan satu invoice bisa dibayar beberapa kali. Saldo belum dialokasi bisa dialokasikan nanti lewat klik baris.{!isSale && ' Biaya operasional (ongkir, gaji, sewa, dll.) dicatat di Kas & Bank, bukan di sini.'}</p>
       {modal && <PaymentForm kind={kind} paymentId={modal.paymentId} partyId={modal.partyId} onClose={() => setModal(null)} onSaved={() => { setModal(null); list.reload(); }} />}
     </div>
   );
