@@ -1,5 +1,9 @@
 # Deploy ke Railway
 
+**Status: SUDAH ter-deploy (2026-10-17).** URL: **https://telur-erp-production.up.railway.app** · project Railway "alert-exploration" (environment production), service `telur-erp` + `MySQL`. Variables: `MYSQL_URL=${{MySQL.MYSQL_URL}}`, `NODE_ENV=production`, `SETUP_CODE` (diisi user, rahasia). Setiap push ke `main` otomatis deploy.
+
+> Jebakan yang terjadi saat setup: variable baru di Railway hanya **staged** sampai tombol "Apply N changes → Deploy" di kiri atas kanvas diklik. Cek log deploy: kalau muncul "PERINGATAN: SETUP_CODE belum diisi", berarti perubahannya belum diterapkan atau nilainya kosong.
+
 Sama seperti Mahjong Online, tapi app ini **punya database**, jadi butuh layanan MySQL di Railway (ada biaya bulanan sendiri). Pengaturan build/start/health check sudah ada di `railway.json`.
 
 1. Repo `awir-personal/telur-erp` (private). Beri izin repo ini ke GitHub App Railway. Di Mahjong, deploy gagal karena izin ini lupa diberikan.

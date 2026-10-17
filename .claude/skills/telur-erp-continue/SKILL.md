@@ -5,7 +5,7 @@ description: Muat konteks lengkap untuk melanjutkan development Telur ERP - ERP 
 
 # Melanjutkan Telur ERP
 
-Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/telur-erp` (branch `main`).
+Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/telur-erp` (branch `main`). **LIVE: https://telur-erp-production.up.railway.app**, dan setiap push ke `main` langsung ter-deploy ke data asli user di server. Jadi rilis = produksi: tes dulu dengan lengkap, dan migrasi harus aman.
 
 1. **Baca `PROJECT_BRIEF.md` sampai habis dulu.** Isinya keputusan user yang sudah dikonfirmasi, model data, hak akses, aturan import/rekonsiliasi/jurnal, dan jebakan yang pernah ditemui.
 2. Cek kondisi nyata, jangan percaya ingatan: `git status`, `git log -5`, versi di `package.json`, service MySQL80 (`Get-Service MySQL80`).

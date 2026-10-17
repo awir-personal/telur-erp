@@ -7,6 +7,7 @@ Sumber kebenaran untuk melanjutkan project ini. Baca seluruhnya sebelum mengubah
 ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari supplier/peternak, jual ke customer, target stok akhir 0. Menggantikan Google Sheet penjualan (screenshot acuan: kolom Tanggal | No Inv | Nama | Telor Curah/Omega/Putih/Tray-Peti/Retak/Bocor (kg + Harga) | Total | Tgl Byr | Nominal | Status).
 
 - Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`
+- **Live di Railway sejak 2026-10-17: https://telur-erp-production.up.railway.app** (project "alert-exploration", MySQL Railway). User memilih **mulai dari nol di server**: data lokal `telur_erp_db` TIDAK dipindahkan. Setelah ini server adalah data utama. Push ke `main` = deploy otomatis, jadi setiap rilis langsung live. Cek setelah push: `curl https://telur-erp-production.up.railway.app/api/version`.
 - Stack: **web app** Node 20+ + Express 5 + mysql2 + React 18 (Vite 5, Tailwind 3), satu repo, BUKAN Electron.
 - DB lokal `telur_erp_db` (MySQL80 bersama app lain). Server: Railway + plugin MySQL (`MYSQL_URL`).
 - Versi: lihat `package.json`. **Konvensi sama dengan semua app user: tampil vX.Y di pojok kiri bawah** (X = perubahan besar, Y = perubahan kecil/bug, angka ketiga tidak dipakai, selalu .0). Rilis 1.0.1 terlanjur memakai angka ketiga; menurut konvensi itu setara v1.1.
@@ -103,6 +104,8 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **Deploy (2026-10-17, v3.1.0)**: Railway dikendalikan lewat Claude in Chrome dengan izin user per langkah (buat project dari repo, tambah MySQL berbayar). SETUP_CODE diketik sendiri oleh user. Domain baru dinyalakan SETELAH log tidak lagi berisi peringatan SETUP_CODE. Verifikasi: /healthz ok, /api/version 3.1.0, /api/auth/status setupCodeRequired=true.
 
 - **3.1.0 (2026-10-17)**: menu "Penerimaan" → **Uang Masuk**, "Bayar Supplier" → **Uang Keluar** (permintaan user; alamat lama `/penerimaan` & `/pembayaran` dialihkan otomatis). Halaman Uang Keluar mengingatkan bahwa biaya operasional dicatat di Kas & Bank. Versi di pojok kini ditanam saat build (`__APP_VERSION__` di `vite.config.js`), tidak lagi dari `/api/version`: server lama milik user (start sebelum v1.2) menjawab 401 untuk endpoint itu → tampil "v?" dan bisa memicu logout.
 
