@@ -82,7 +82,7 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 ## 6. Menjalankan & tes
 
 - `npm run dev` → API :3200 (`node --watch`) + Vite :5180. `scripts/dev.js --db=nama` memakai DB lain.
-- Preview di sesi Claude: config `telur-erp` / `telur-erp-uitest` (DB `telur_erp_uitest_zz`) di `C:\Users\Han\Downloads\Claude\.claude\launch.json`. **Uji UI selalu di DB uitest**, jangan di `telur_erp_db`. DB uitest dihapus setelah selesai.
+- Preview di sesi Claude: config `telur-erp-uitest` di `C:\Users\Han\Downloads\Claude\.claude\launch.json` → `scripts/uitest.js` (port **3299**, DB `telur_erp_uitest_zz`, build terpisah `npx vite build --outDir dist-uitest`). **Uji UI selalu di sini**, jangan di `telur_erp_db` / port 3200 / folder `dist` (milik app user yang mungkin sedang jalan). DB uitest dihapus setelah selesai.
 - `npm test` = 31 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
 - Sudah di-mutation-test: 13/14 mutasi tertangkap. Satu yang lolos (EPS di status lunas) adalah mutan ekuivalen karena `outstanding` sudah di-round2.
 
