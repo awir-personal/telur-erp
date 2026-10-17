@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { post } from '../api';
 import { ErrorBox, PageTitle, useAction } from '../components/ui';
+import { useConfirm } from '../lib/confirm';
 import { METHOD, rp, tgl } from '../format';
 
 export default function ImportPage() {
@@ -14,6 +15,7 @@ export default function ImportPage() {
   const [ignoreErrors, setIgnoreErrors] = useState(false);
   const [result, setResult] = useState(null);
   const a = useAction();
+  const confirm = useConfirm();
 
   const rows = () => (wb ? wb.sheets[sheet] : paste.split(/\r?\n/).map((l) => l.split('\t')));
 
@@ -30,7 +32,7 @@ export default function ImportPage() {
 
   const preview = () => a.run(async () => { setResult(null); setPlan(await post('/import/preview', { rows: rows(), numberFormat: fmt })); });
   const commit = () => a.run(async () => {
-    if (!window.confirm(`Import ${plan.invoices.filter((i) => !i.exists).length} invoice ke database?`)) return;
+    if (!await confirm(`Import ${plan.invoices.filter((i) => !i.exists).length} invoice ke database?`, { danger: false, confirmLabel: 'Import' })) return;
     setResult(await post('/import/commit', { rows: rows(), numberFormat: fmt, ignoreErrors }));
     setPlan(null);
   });

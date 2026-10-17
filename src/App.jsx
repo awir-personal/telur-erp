@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { get, post, getToken, setToken, setUnauthorizedHandler } from './api';
 import { AuthCtx } from './components/ui';
+import { ThemeToggle, formatVersion } from './lib/theme';
 import { LoginPage, ForcedChangePin } from './pages/Login';
 import InvoicesPage from './pages/Invoices';
 import InvoiceForm from './pages/InvoiceForm';
@@ -14,6 +15,13 @@ import ImportPage from './pages/Import';
 import SettingsPage from './pages/Settings';
 
 const ROLE = { master: 'Master', admin: 'Admin', finance: 'Finance' };
+
+// Versi di pojok kiri bawah, format vX.Y — sama seperti semua app lain.
+export function VersionFooter() {
+  const [v, setV] = useState('v?');
+  useEffect(() => { get('/version').then((r) => setV(formatVersion(r.version)), () => {}); }, []);
+  return <div className="no-print pointer-events-none fixed bottom-2 left-3 select-none text-[11px] text-slate-400 dark:text-slate-600">{v}</div>;
+}
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = memuat, null = belum login
@@ -28,10 +36,11 @@ export default function App() {
   const logout = async () => { try { await post('/auth/logout'); } catch { /* tetap keluar */ } setToken(null); setMe(null); };
 
   if (me === undefined) return <div className="p-6 text-sm text-slate-500">Memuat…</div>;
-  if (!me) return <LoginPage onLogin={loadMe} />;
-  if (me.user.must_change_pin) return <ForcedChangePin onDone={loadMe} onLogout={logout} />;
+  if (!me) return <><LoginPage onLogin={loadMe} /><VersionFooter /></>;
+  if (me.user.must_change_pin) return <><ForcedChangePin onDone={loadMe} onLogout={logout} /><VersionFooter /></>;
 
   const p = me.perms;
+  const isMaster = me.user.role === 'master';
   const links = [
     ['/penjualan', 'Penjualan'],
     ['/pembelian', 'Pembelian'],
@@ -40,46 +49,54 @@ export default function App() {
     ['/laporan', 'Laporan'],
     ['/master', 'Master'],
     p.import && ['/import', 'Import'],
-    me.user.role === 'master' && ['/user', 'User'],
-    ['/pengaturan', me.user.role === 'master' ? 'Pengaturan' : 'Akun'],
+    isMaster && ['/user', 'User'],
+    ['/pengaturan', isMaster ? 'Pengaturan' : 'Akun'],
   ].filter(Boolean);
 
   return (
     <AuthCtx.Provider value={{ ...me, logout }}>
-      <header className="sticky top-0 z-40 border-b border-amber-700 bg-amber-600 text-white shadow">
-        <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-3 py-2">
-          <span className="font-bold">🥚 Telur ERP</span>
-          <nav className="flex flex-1 gap-1 overflow-x-auto text-sm">
-            {links.map(([to, label]) => (
-              <NavLink key={to} to={to} className={({ isActive }) => `whitespace-nowrap rounded px-2 py-1 ${isActive ? 'bg-white/25 font-semibold' : 'hover:bg-white/15'}`}>{label}</NavLink>
-            ))}
-          </nav>
-          <div className="hidden text-right text-xs leading-tight sm:block">
-            <div className="font-semibold">{me.user.name}</div>
-            <div className="opacity-80">{ROLE[me.user.role]}</div>
+      <div className="flex min-h-screen flex-col">
+        <header className="no-print flex items-center justify-between gap-2 bg-brand-700 px-4 py-3 text-white sm:px-6">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold leading-tight">🥚 Telur ERP</h1>
+            <p className="truncate text-xs text-brand-100">Penjualan, pembelian & piutang distribusi telur</p>
           </div>
-          <button className="rounded bg-white/20 px-2 py-1 text-xs hover:bg-white/30" onClick={logout}>Keluar</button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-[1600px] p-3">
-        <Routes>
-          <Route path="/" element={<Navigate to="/penjualan" replace />} />
-          <Route path="/penjualan" element={<InvoicesPage kind="sale" />} />
-          <Route path="/pembelian" element={<InvoicesPage kind="purchase" />} />
-          <Route path="/penjualan/baru" element={<InvoiceForm kind="sale" />} />
-          <Route path="/pembelian/baru" element={<InvoiceForm kind="purchase" />} />
-          <Route path="/invoice/:id/edit" element={<InvoiceForm />} />
-          <Route path="/invoice/:id" element={<InvoiceDetail />} />
-          <Route path="/penerimaan" element={<PaymentsPage kind="sale" />} />
-          <Route path="/pembayaran" element={<PaymentsPage kind="purchase" />} />
-          <Route path="/laporan" element={<ReportsPage />} />
-          <Route path="/master" element={<MastersPage />} />
-          <Route path="/import" element={<ImportPage />} />
-          <Route path="/user" element={<UsersPage />} />
-          <Route path="/pengaturan" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/penjualan" replace />} />
-        </Routes>
-      </main>
+          <div className="flex items-center gap-1">
+            <span className="hidden px-2 text-right text-xs leading-tight text-brand-100 sm:block">
+              <span className="block font-semibold text-white">{me.user.name}</span>{ROLE[me.user.role]}
+            </span>
+            <ThemeToggle />
+            <button type="button" onClick={logout} className="rounded-md px-2 py-1 text-sm text-brand-100 transition-colors hover:bg-brand-600/50 hover:text-white">Keluar</button>
+          </div>
+        </header>
+        <nav className="no-print flex gap-1 overflow-x-auto border-b border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-800 sm:px-6">
+          {links.map(([to, label]) => (
+            <NavLink key={to} to={to} className={({ isActive }) => `-mb-px whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium ${isActive
+              ? 'border-brand-600 text-brand-700 dark:text-brand-400'
+              : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}>{label}</NavLink>
+          ))}
+        </nav>
+        <main className="mx-auto w-full max-w-[1600px] flex-1 p-3 pb-10 sm:px-6">
+          <Routes>
+            <Route path="/" element={<Navigate to="/penjualan" replace />} />
+            <Route path="/penjualan" element={<InvoicesPage kind="sale" />} />
+            <Route path="/pembelian" element={<InvoicesPage kind="purchase" />} />
+            <Route path="/penjualan/baru" element={<InvoiceForm kind="sale" />} />
+            <Route path="/pembelian/baru" element={<InvoiceForm kind="purchase" />} />
+            <Route path="/invoice/:id/edit" element={<InvoiceForm />} />
+            <Route path="/invoice/:id" element={<InvoiceDetail />} />
+            <Route path="/penerimaan" element={<PaymentsPage kind="sale" />} />
+            <Route path="/pembayaran" element={<PaymentsPage kind="purchase" />} />
+            <Route path="/laporan" element={<ReportsPage />} />
+            <Route path="/master" element={<MastersPage />} />
+            <Route path="/import" element={<ImportPage />} />
+            <Route path="/user" element={<UsersPage />} />
+            <Route path="/pengaturan" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/penjualan" replace />} />
+          </Routes>
+        </main>
+        <VersionFooter />
+      </div>
     </AuthCtx.Provider>
   );
 }

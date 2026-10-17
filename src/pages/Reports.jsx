@@ -12,7 +12,7 @@ export default function ReportsPage() {
     <div>
       <PageTitle>Laporan</PageTitle>
       <div className="mb-3 flex gap-1 overflow-x-auto border-b">
-        {TABS.map(([k, v]) => <button key={k} className={`whitespace-nowrap px-3 py-1.5 text-sm ${tab === k ? 'border-b-2 border-amber-600 font-semibold' : 'text-slate-600'}`} onClick={() => setTab(k)}>{v}</button>)}
+        {TABS.map(([k, v]) => <button key={k} className={`whitespace-nowrap px-3 py-1.5 text-sm ${tab === k ? 'border-b-2 border-brand-600 font-semibold' : 'text-slate-600'}`} onClick={() => setTab(k)}>{v}</button>)}
       </div>
       {tab === 'piutang' && <Aging kind="sale" />}
       {tab === 'hutang' && <Aging kind="purchase" />}

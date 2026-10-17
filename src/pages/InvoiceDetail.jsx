@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { del, get, post, put } from '../api';
 import PaymentForm from '../components/PaymentForm';
 import { ErrorBox, Field, Modal, NumInput, PageTitle, StatusBadge, useAction, useAuth, useLoad } from '../components/ui';
+import { useConfirm } from '../lib/confirm';
 import { ADJ, METHOD, qty, rp, tgl, today } from '../format';
 
 export default function InvoiceDetail() {
@@ -14,6 +15,7 @@ export default function InvoiceDetail() {
   const [adjModal, setAdjModal] = useState(false);
   const [diffNote, setDiffNote] = useState(null);
   const a = useAction();
+  const confirm = useConfirm();
 
   if (inv.error) return <ErrorBox error={inv.error} />;
   if (!inv.data) return <p className="text-sm text-slate-500">Memuat…</p>;
@@ -23,7 +25,7 @@ export default function InvoiceDetail() {
   const note = diffNote ?? d.diff_note ?? '';
 
   const roundIt = () => a.run(async () => {
-    if (!window.confirm(`Bulatkan sisa ${rp(d.outstanding)} jadi 0? Akan dicatat sebagai penyesuaian "Pembulatan".`)) return;
+    if (!await confirm(`Bulatkan sisa ${rp(d.outstanding)} jadi 0? Akan dicatat sebagai penyesuaian "Pembulatan".`, { danger: false, confirmLabel: 'Bulatkan' })) return;
     await post(`/invoices/${id}/round`, { date: today() });
     reload();
   });
@@ -34,12 +36,12 @@ export default function InvoiceDetail() {
     setDiffNote(null); reload();
   });
   const removeInvoice = () => a.run(async () => {
-    if (!window.confirm(`Hapus ${isSale ? 'invoice' : 'nota'} ${d.number}? Tidak bisa dibatalkan (tetap tercatat di log).`)) return;
+    if (!await confirm(`Hapus ${isSale ? 'invoice' : 'nota'} ${d.number}? Tidak bisa dibatalkan (tetap tercatat di log).`)) return;
     await del(`/invoices/${id}`);
     nav(isSale ? '/penjualan' : '/pembelian', { replace: true });
   });
   const removeAdj = (adj) => a.run(async () => {
-    if (!window.confirm(`Hapus penyesuaian ${ADJ[adj.type]} ${rp(adj.amount)}?`)) return;
+    if (!await confirm(`Hapus penyesuaian ${ADJ[adj.type]} ${rp(adj.amount)}?`)) return;
     await del(`/adjustments/${adj.id}`); reload();
   });
 

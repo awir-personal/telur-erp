@@ -14,6 +14,8 @@ function checkNewPin(pin) {
 function publicRoutes(pool, { setupCode, loginDelayMs = 400 }) {
   const r = express.Router();
 
+  r.get('/version', (req, res) => res.json({ version: require('../../package.json').version }));
+
   r.get('/auth/status', async (req, res) => {
     const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM users');
     res.json({ needsSetup: n === 0, setupCodeRequired: Boolean(setupCode) });

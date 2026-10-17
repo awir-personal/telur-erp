@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { del, get, post, put, qs } from '../api';
 import { ErrorBox, Field, Modal, NumInput, useAction, useLoad } from './ui';
+import { useConfirm } from '../lib/confirm';
 import { METHOD, rp, tgl, today } from '../format';
 
 const r2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
@@ -14,6 +15,7 @@ export default function PaymentForm({ kind, paymentId, partyId: initialParty, in
   const parties = useLoad(() => get('/parties' + qs({ kind: isSale ? 'customer' : 'supplier' })), [kind]);
   const open = useLoad(() => (p.party_id ? get('/open-invoices' + qs({ kind, party_id: p.party_id })) : Promise.resolve([])), [p.party_id]);
   const a = useAction();
+  const confirm = useConfirm();
 
   useEffect(() => {
     if (!paymentId) return;
@@ -65,7 +67,7 @@ export default function PaymentForm({ kind, paymentId, partyId: initialParty, in
     });
   };
   const remove = () => a.run(async () => {
-    if (!window.confirm('Hapus pembayaran ini? Semua alokasinya ikut terhapus.')) return;
+    if (!await confirm('Hapus pembayaran ini? Semua alokasinya ikut terhapus.')) return;
     await del(`/payments/${paymentId}`);
     onSaved();
   });

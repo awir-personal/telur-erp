@@ -12,8 +12,11 @@ const lineTotal = (l) => round2(Number(l.qty) * Number(l.price));
 function summarize(lines, paid, adjusted, importedTotal) {
   const total = round2(lines.reduce((s, l) => s + lineTotal(l), 0));
   const outstanding = round2(total - Number(adjusted || 0) - Number(paid || 0));
+  const zeroPriceLines = lines.filter((l) => Number(l.qty) !== 0 && Number(l.price) === 0).length;
   let status;
-  if (Math.abs(outstanding) < EPS) status = 'lunas';
+  // Harga belum diisi = tagihan belum final; jangan pernah disebut lunas walau sisanya 0.
+  if (Math.abs(outstanding) < EPS && zeroPriceLines && !Number(paid)) status = 'belum';
+  else if (Math.abs(outstanding) < EPS) status = 'lunas';
   else if (outstanding < 0) status = 'lebih_bayar';
   else if (Number(paid) > 0) status = 'sebagian';
   else status = 'belum';
@@ -23,7 +26,7 @@ function summarize(lines, paid, adjusted, importedTotal) {
   return {
     total, paid: round2(paid || 0), adjusted: round2(adjusted || 0), outstanding, status,
     importDiff: Math.abs(importDiff) < EPS ? 0 : importDiff,
-    zeroPriceLines: lines.filter((l) => Number(l.qty) !== 0 && Number(l.price) === 0).length,
+    zeroPriceLines,
     cost, margin: cost == null ? null : round2(total - cost),
   };
 }

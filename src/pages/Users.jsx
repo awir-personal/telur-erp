@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { get, post, put } from '../api';
+import { useConfirm } from '../lib/confirm';
 import { ErrorBox, Field, Modal, PageTitle, useAction, useAuth, useLoad } from '../components/ui';
 
 const ROLES = { master: 'Master (semua akses + kelola user)', admin: 'Admin (input invoice, master data, import)', finance: 'Finance (validasi pembayaran, retur, pembulatan)' };
@@ -10,6 +11,7 @@ export default function UsersPage() {
   const [edit, setEdit] = useState(null);
   const [pinShown, setPinShown] = useState(null); // {name, pin}
   const a = useAction();
+  const confirm = useConfirm();
 
   if (user.role !== 'master') return <ErrorBox error={{ message: 'Hanya master user' }} />;
 
@@ -22,7 +24,7 @@ export default function UsersPage() {
     });
   };
   const reset = (u) => a.run(async () => {
-    if (!window.confirm(`Reset PIN ${u.name}? PIN lama langsung tidak berlaku dan sesi ${u.name} di semua perangkat diputus.`)) return;
+    if (!await confirm(`Reset PIN ${u.name}? PIN lama langsung tidak berlaku dan sesi ${u.name} di semua perangkat diputus.`, { confirmLabel: 'Reset PIN' })) return;
     const r = await post(`/users/${u.id}/reset-pin`);
     setPinShown({ name: u.name, pin: r.tempPin });
     list.reload();

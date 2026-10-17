@@ -9,7 +9,8 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 - Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`
 - Stack: **web app** Node 20+ + Express 5 + mysql2 + React 18 (Vite 5, Tailwind 3), satu repo, BUKAN Electron.
 - DB lokal `telur_erp_db` (MySQL80 bersama app lain). Server: Railway + plugin MySQL (`MYSQL_URL`).
-- Versi: lihat `package.json`.
+- Versi: lihat `package.json`. **Konvensi sama dengan semua app user: tampil vX.Y di pojok kiri bawah** (X = perubahan besar, Y = perubahan kecil/bug, angka ketiga tidak dipakai, selalu .0). Rilis 1.0.1 terlanjur memakai angka ketiga; menurut konvensi itu setara v1.1.
+- Tampilan: palet `brand` amber penuh 50–950 (sama dengan app Distributor Telur lama, beda dari biru/teal/cyan app lain), header `bg-brand-700` + judul & subjudul, tab menu putih, toggle 🌙 Gelap / ☀️ Terang (`src/lib/theme.jsx`, darkMode class), dialog konfirmasi sendiri (`src/lib/confirm.jsx`, bukan window.confirm). Warna terang di halaman diberi varian gelap secara global di `src/index.css` (`.dark .bg-white` dst.).
 
 ## 2. Keputusan yang SUDAH dikonfirmasi user (2026-10-17) — jangan diubah tanpa bertanya
 
@@ -78,6 +79,8 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **1.2.0 (2026-10-17)**: tampilan disamakan dengan app lain (lihat bagian 1), versi vX.Y di pojok, mode gelap, dialog konfirmasi sendiri. Bug: invoice dengan harga kosong (total 0) tertulis "Lunas", sekarang "Belum bayar". Server uji Claude dipindah ke port 3299 + `dist-uitest` + DB `telur_erp_uitest_zz` (`scripts/uitest.js`), karena user menjalankan app aslinya di 3200 bersamaan.
 
 - **1.0.1 (2026-10-17)**: perbaikan dari laporan user "gagal run & error 500". (1) `npm` diblokir execution policy PowerShell → tambah `Jalankan Telur ERP.bat` (npm.cmd). (2) Vite sisa preview tetap memegang :5180 tanpa API → `dev.js` mematikan seluruh pohon proses, `.bat` memakai mode start biasa. (3) Ditemukan `telur_erp_db` setengah termigrasi (DDL terputus) yang akan membuat setiap start gagal → migrasi dibuat idempoten + `GET_LOCK`, dan DB itu sudah dilengkapi (masih 0 user). Pesan error 500 tanpa body dan port terpakai diperjelas.
 

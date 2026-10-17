@@ -20,7 +20,8 @@ function createApp(pool, opts = {}) {
   app.use('/api', require('./routes/reports')(pool));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Endpoint tidak ada' }));
 
-  const dist = path.join(__dirname, '..', 'dist');
+  // DIST_DIR: server uji Claude memakai build terpisah (dist-uitest) supaya tidak menimpa app user yang sedang jalan.
+  const dist = process.env.DIST_DIR || path.join(__dirname, '..', 'dist');
   if (fs.existsSync(dist)) {
     app.use(express.static(dist));
     app.get(/^(?!\/api).*/, (req, res) => res.sendFile(path.join(dist, 'index.html')));

@@ -36,6 +36,7 @@ test('summarize: status & selisih', () => {
   assert.equal(s.status, 'lunas');
   assert.equal(C.summarize(lines, 0, 0, 2923300).importDiff, 100);
   assert.equal(C.summarize([{ qty: 10, price: 0 }], 0, 0).zeroPriceLines, 1);
+  assert.equal(C.summarize([{ qty: 10, price: 0 }], 0, 0).status, 'belum'); // harga kosong ≠ lunas
 });
 
 test('margin hanya bila semua baris punya harga beli', () => {
