@@ -23,6 +23,7 @@ export default function Dashboard() {
   const x = d.data;
   const todo = [
     x.todo.diffOpen > 0 && [`${x.todo.diffOpen} invoice punya selisih total sheet yang belum dijustifikasi`, '/penjualan'],
+    x.todo.dupOpen > 0 && [`${x.todo.dupOpen} invoice ber-No Inv dobel (hasil import) belum diberi catatan`, '/penjualan'],
     x.todo.zeroPrice > 0 && [`${x.todo.zeroPrice} invoice/nota dengan harga kosong`, '/penjualan'],
     x.todo.overpaid > 0 && [`${x.todo.overpaid} invoice/nota lebih bayar`, '/penjualan'],
     x.todo.unallocatedSale > 0 && [`Uang masuk Rp ${rp(x.todo.unallocatedSale)} belum dialokasikan ke invoice`, '/uang-masuk'],

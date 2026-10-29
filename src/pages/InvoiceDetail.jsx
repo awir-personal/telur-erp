@@ -14,6 +14,7 @@ export default function InvoiceDetail() {
   const [payModal, setPayModal] = useState(null); // {paymentId?}
   const [adjModal, setAdjModal] = useState(false);
   const [diffNote, setDiffNote] = useState(null);
+  const [dupNote, setDupNote] = useState(null);
   const a = useAction();
   const confirm = useConfirm();
 
@@ -23,6 +24,8 @@ export default function InvoiceDetail() {
   const isSale = d.kind === 'sale';
   const reload = () => inv.reload();
   const note = diffNote ?? d.diff_note ?? '';
+  const dNote = dupNote ?? d.dup_note ?? '';
+  const saveDupNote = () => a.run(async () => { await put(`/invoices/${id}/dup-note`, { dup_note: dNote }); setDupNote(null); reload(); });
 
   const roundIt = () => a.run(async () => {
     if (!await confirm(`Bulatkan sisa ${rp(d.outstanding)} jadi 0? Akan dicatat sebagai penyesuaian "Pembulatan".`, { danger: false, confirmLabel: 'Bulatkan' })) return;
@@ -76,6 +79,19 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
+      {/* ===== No Inv dobel (hasil import apa adanya, v3.3) ===== */}
+      {d.dupCount > 1 && (
+        <div className={`card border-2 ${d.dupOpen ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`}>
+          <h3 className="mb-1 font-semibold">{d.dupOpen ? '⚠ ' : '✓ '}No Inv {d.number} dipakai {d.dupCount} invoice</h3>
+          <p className="mb-2 text-xs text-slate-600">Di sheet asal nomor ini ada di beberapa baris, dan semuanya diimport apa adanya tanpa diubah. <Link className="underline" to={`/${isSale ? 'penjualan' : 'pembelian'}?q=${encodeURIComponent(d.number)}`}>Lihat semua invoice nomor ini</Link>. Beri catatan (mis. "baris tambahan invoice yang sama" / "salah nomor di sheet, seharusnya …").</p>
+          {perms.note && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input className="inp flex-1" placeholder="Catatan No Inv dobel" value={dNote} onChange={(e) => setDupNote(e.target.value)} />
+              <button className="btn-ghost" onClick={saveDupNote} disabled={a.busy}>Simpan catatan</button>
+            </div>
+          )}
+        </div>
+      )}
       {/* ===== Selisih yang wajib ditangani ===== */}
       {d.importDiff !== 0 && (
         <div className={`card border-2 ${d.diffOpen ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}>

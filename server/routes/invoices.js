@@ -71,7 +71,7 @@ module.exports = function invoiceRoutes(pool) {
     let rows = await loadInvoices(pool, where.join(' AND '), params, 'i.date, LENGTH(i.number), i.number, i.id');
     const st = req.query.status;
     if (st === 'open') rows = rows.filter((x) => x.status !== 'lunas');
-    else if (st === 'selisih') rows = rows.filter((x) => x.diffOpen || x.status === 'lebih_bayar' || x.zeroPriceLines > 0);
+    else if (st === 'selisih') rows = rows.filter((x) => x.diffOpen || x.dupOpen || x.status === 'lebih_bayar' || x.zeroPriceLines > 0);
     else if (st) rows = rows.filter((x) => x.status === st);
     res.json(rows);
   });
@@ -105,7 +105,8 @@ module.exports = function invoiceRoutes(pool) {
     const before = id ? await getInvoice(pool, id) : null;
     const newId = await tx(pool, async (c) => {
       let number = optStr(b.number, 40);
-      if (number) {
+      // nomor dicek dobel hanya kalau baru / diganti: invoice hasil import yang memang bernomor dobel (v3.3) tetap bisa diedit
+      if (number && number !== before?.number) {
         const [[dup]] = await c.query('SELECT id FROM invoices WHERE kind = ? AND number = ? AND id <> ?', [kind, number, id || 0]);
         if (dup) throw bad(`Nomor ${number} sudah dipakai`);
         await bumpCounter(c, kind, number);
@@ -138,6 +139,15 @@ module.exports = function invoiceRoutes(pool) {
     if (inv.paid !== 0) throw bad('Invoice sudah ada pembayaran — hapus/ubah alokasi pembayarannya dulu');
     await pool.query('DELETE FROM invoices WHERE id = ?', [inv.id]);
     await log(pool, req.user, 'delete', `invoice_${inv.kind}`, inv.id, { number: inv.number, party: inv.party_name, total: inv.total, lines: inv.lines.map(slim) });
+    res.json({ ok: true });
+  });
+
+  // v3.3 Catatan untuk No Inv yang dipakai >1 invoice (hasil import apa adanya).
+  r.put('/invoices/:id/dup-note', requirePerm('note'), async (req, res) => {
+    const inv = await getInvoice(pool, req.params.id);
+    const note = optStr(req.body.dup_note, 2000);
+    await pool.query('UPDATE invoices SET dup_note = ? WHERE id = ?', [note, inv.id]);
+    await log(pool, req.user, 'dup_note', `invoice_${inv.kind}`, inv.id, { number: inv.number, dupCount: inv.dupCount, note });
     res.json({ ok: true });
   });
 

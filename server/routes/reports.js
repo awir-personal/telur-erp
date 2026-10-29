@@ -93,13 +93,32 @@ module.exports = function reportRoutes(pool) {
   });
 
   // ===== Import sheet penjualan =====
+  // Import ulang tidak boleh dobel (v3.3: 1 baris = 1 invoice, nomor boleh sama). Invoice yang sudah ada per
+  // nomor: import_seq NULL = diketik manual / hasil import lama yang MENGGABUNG baris -> semua baris nomor itu
+  // dilewati (sudah tercakup); selain itu dilewati per urutan kemunculan (seq).
+  async function existingImports(db, invoices) {
+    const nums = [...new Set(invoices.map((i) => i.number))];
+    const m = new Map();
+    if (!nums.length) return m;
+    const [rows] = await db.query('SELECT number, import_seq FROM invoices WHERE kind = "sale" AND number IN (?)', [nums]);
+    for (const r of rows) {
+      if (!m.has(r.number)) m.set(r.number, { legacy: false, seqs: new Set() });
+      if (r.import_seq == null) m.get(r.number).legacy = true;
+      else m.get(r.number).seqs.add(r.import_seq);
+    }
+    return m;
+  }
+  function skipReason(ex, inv) {
+    const e = ex.get(inv.number);
+    if (!e) return null;
+    if (e.legacy) return 'nomor sudah ada';
+    return e.seqs.has(inv.seq) ? 'baris ini sudah pernah diimport' : null;
+  }
   r.post('/import/preview', requirePerm('import'), async (req, res) => {
     const plan = parseSheet(req.body.rows || [], { numberFormat: req.body.numberFormat });
     if (plan.error) throw bad(plan.error);
-    const nums = plan.invoices.map((i) => i.number);
-    const [exist] = nums.length ? await pool.query('SELECT number FROM invoices WHERE kind = "sale" AND number IN (?)', [nums]) : [[]];
-    const existing = new Set(exist.map((e) => e.number));
-    for (const inv of plan.invoices) inv.exists = existing.has(inv.number);
+    const ex = await existingImports(pool, plan.invoices);
+    for (const inv of plan.invoices) inv.exists = !!skipReason(ex, inv);
     res.json(plan);
   });
 
@@ -138,27 +157,41 @@ module.exports = function reportRoutes(pool) {
         return p;
       }
       const imported = [], skipped = [];
+      const ex = await existingImports(c, plan.invoices);
+      const done = []; // { inv, id, partyId, room }
       for (const inv of plan.invoices) {
-        const [[dup]] = await c.query('SELECT id FROM invoices WHERE kind = "sale" AND number = ?', [inv.number]);
-        if (dup) { skipped.push(`${inv.number}: nomor sudah ada`); continue; }
-        if (!inv.lines.length) { skipped.push(`${inv.number}: tidak ada baris barang`); continue; }
+        const label = inv.dupCount > 1 ? `${inv.number} (baris ${inv.rows[0]})` : inv.number;
+        const why = skipReason(ex, inv);
+        if (why) { skipped.push(`${label}: ${why}`); continue; }
+        if (!inv.lines.length) { skipped.push(`${label}: tidak ada baris barang`); continue; }
         const p = await party(inv.partyName);
         const [ins] = await c.query('INSERT INTO invoices SET ?', [{
-          kind: 'sale', number: inv.number, date: inv.date, party_id: p.id, due_date: addDays(inv.date, p.term_days),
+          kind: 'sale', number: inv.number, import_seq: inv.seq, date: inv.date, party_id: p.id, due_date: addDays(inv.date, p.term_days),
           po_ref: inv.poRef, notes: inv.notes, imported_total: inv.importedTotal, created_by: req.user.id, updated_by: req.user.id,
         }]);
         const lineRows = [];
         for (const [i, l] of inv.lines.entries()) lineRows.push([ins.insertId, await itemId(l.itemName, l.unitName), await unitId(l.unitName), l.qty, l.price, null, null, i]);
         await c.query('INSERT INTO invoice_lines (invoice_id, item_id, unit_id, qty, price, cost_price, note, sort) VALUES ?', [lineRows]);
-        let room = inv.computedTotal;
-        for (const pay of inv.payments) {
-          const [pi] = await c.query('INSERT INTO payments SET ?', [{ kind: 'sale', date: pay.date, party_id: p.id, method: pay.method, amount: pay.amount, notes: pay.note, created_by: req.user.id }]);
-          const alloc = round2(Math.min(pay.amount, Math.max(room, 0)));
-          if (alloc > 0) await c.query('INSERT INTO allocations (payment_id, invoice_id, amount) VALUES (?,?,?)', [pi.insertId, ins.insertId, alloc]);
-          room = round2(room - alloc);
-        }
+        done.push({ inv, id: ins.insertId, partyId: p.id, room: inv.computedTotal });
         await bumpCounter(c, 'sale', inv.number);
-        imported.push(inv.number);
+        imported.push(label);
+      }
+      // Pembayaran (kolom Nominal) baris itu: dialokasikan ke invoice barisnya dulu, sisanya ke invoice lain
+      // bernomor SAMA & customer sama (mis. 3860: Nominal di baris ke-2 membayar baris ke-1 juga). Angka sheet
+      // tidak diubah; sisa yang tetap tak teralokasi jadi "uang masuk belum dialokasikan".
+      for (const d of done) {
+        const targets = [d, ...done.filter((o) => o !== d && o.inv.number === d.inv.number && o.partyId === d.partyId)];
+        for (const pay of d.inv.payments) {
+          const [pi] = await c.query('INSERT INTO payments SET ?', [{ kind: 'sale', date: pay.date, party_id: d.partyId, method: pay.method, amount: pay.amount, notes: pay.note, created_by: req.user.id }]);
+          let left = pay.amount;
+          for (const t of targets) {
+            const alloc = round2(Math.min(left, Math.max(t.room, 0)));
+            if (alloc <= 0) continue;
+            await c.query('INSERT INTO allocations (payment_id, invoice_id, amount) VALUES (?,?,?)', [pi.insertId, t.id, alloc]);
+            t.room = round2(t.room - alloc);
+            left = round2(left - alloc);
+          }
+        }
       }
       return { imported, skipped, created };
     });

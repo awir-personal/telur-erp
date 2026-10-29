@@ -48,7 +48,12 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
   if (!pairs.length) return { error: 'Tidak ada pasangan kolom (jumlah, Harga) antara Nama dan Total.' };
 
   const num = (v) => parseNumber(v, numberFormat);
-  const byNo = new Map();
+  // v3.3 (keputusan user): 1 baris sheet = 1 invoice, APA ADANYA. No Inv yang muncul di beberapa baris
+  // (nama sama maupun beda) TIDAK digabung/ditolak - tiap baris jadi invoice sendiri dengan nomor yang
+  // sama persis, lalu user memberi catatan. `seq` = urutan kemunculan nomor itu di sheet (1, 2, ...),
+  // dipakai saat commit supaya import ulang tidak membuat dobel.
+  const list = [];
+  const seqOf = new Map();
   const errors = [];
   for (let r = h + 1; r < rows.length; r++) {
     const row = rows[r] || [];
@@ -60,20 +65,14 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
     if (!name && !hasNumber) continue;
     const rowNum = r + 1;
     if (!no) { errors.push(`Baris ${rowNum}: No Inv kosong`); continue; }
+    const seq = (seqOf.get(no) || 0) + 1; // dihitung sebelum validasi lain: urutan tetap walau baris lain error
+    seqOf.set(no, seq);
     if (!name) { errors.push(`Baris ${rowNum}: Nama kosong`); continue; }
     const date = parseDate(row[c.date]);
     if (!date) { errors.push(`Baris ${rowNum}: tanggal "${row[c.date] ?? ''}" tidak terbaca`); continue; }
 
-    let inv = byNo.get(no);
-    if (!inv) {
-      inv = { number: no, date, partyName: name, lines: [], importedTotal: 0, payments: [], poRef: null, notes: [], rows: [], warnings: [] };
-      byNo.set(no, inv);
-    } else {
-      if (norm(inv.partyName) !== norm(name)) { errors.push(`Baris ${rowNum}: No Inv ${no} dipakai juga untuk "${inv.partyName}" (sekarang "${name}")`); continue; }
-      inv.warnings.push(`No Inv ${no} muncul di lebih dari satu baris (baris ${inv.rows.join(', ')} & ${rowNum}) — digabung jadi 1 invoice`);
-      if (date !== inv.date) inv.warnings.push(`Baris ${rowNum}: tanggal beda (${date}) dari baris pertama (${inv.date}) — dipakai ${inv.date}`);
-    }
-    inv.rows.push(rowNum);
+    const inv = { number: no, seq, date, partyName: name, lines: [], importedTotal: 0, payments: [], poRef: null, notes: [], rows: [rowNum], warnings: [] };
+    list.push(inv);
 
     for (const p of pairs) {
       const qty = num(row[p.qtyCol]);
@@ -105,7 +104,14 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
     }
   }
 
-  const invoices = [...byNo.values()].map((inv) => {
+  const count = new Map();
+  for (const inv of list) count.set(inv.number, (count.get(inv.number) || 0) + 1);
+  const invoices = list.map((inv) => {
+    inv.dupCount = count.get(inv.number);
+    if (inv.dupCount > 1) {
+      const baris = list.filter((x) => x.number === inv.number).map((x) => `${x.rows[0]} (${x.partyName})`).join(', ');
+      inv.warnings.unshift(`No Inv ${inv.number} ada di ${inv.dupCount} baris sheet (baris ${baris}) — masuk apa adanya sebagai ${inv.dupCount} invoice bernomor sama; beri catatan setelah import`);
+    }
     const computed = round2(inv.lines.reduce((s, l) => s + lineTotal(l), 0));
     const diff = round2(inv.importedTotal - computed);
     if (Math.abs(diff) >= EPS) inv.warnings.push(`Total di sheet ${inv.importedTotal} ≠ hitungan ${computed} (selisih ${diff}) — perlu justifikasi setelah import`);

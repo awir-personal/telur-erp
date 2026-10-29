@@ -260,7 +260,26 @@ const MIGRATIONS = [
       FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE
     )`,
   ]],
+  // v3.3 — import "1 baris sheet = 1 invoice apa adanya": No Inv boleh dobel (hasil import), user memberi
+  // catatan. Invoice yang diketik manual tetap dicek dobel di aplikasi (routes/invoices.js).
+  ['004_no_inv_boleh_dobel', [
+    addIndex('invoices', 'ix_inv_number', '(kind, number)'), // dulu sebelum unik dilepas: FK/query tetap punya indeks
+    dropIndex('invoices', 'uq_inv'),
+    addColumn('invoices', 'import_seq', 'SMALLINT NULL'), // urutan kemunculan No Inv di sheet (1, 2, ...); NULL = manual / import lama (digabung)
+    addColumn('invoices', 'dup_note', 'TEXT NULL'), // catatan user untuk No Inv dobel
+  ]],
 ];
+
+function indexExists(conn, table, name) {
+  return conn.query('SELECT COUNT(*) AS n FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?', [table, name])
+    .then(([[{ n }]]) => n > 0);
+}
+function addIndex(table, name, cols) {
+  return async (conn) => { if (!await indexExists(conn, table, name)) await conn.query(`ALTER TABLE \`${table}\` ADD INDEX \`${name}\` ${cols}`); };
+}
+function dropIndex(table, name) {
+  return async (conn) => { if (await indexExists(conn, table, name)) await conn.query(`ALTER TABLE \`${table}\` DROP INDEX \`${name}\``); };
+}
 
 // ALTER TABLE ADD COLUMN yang aman diulang (MySQL 8 tidak punya ADD COLUMN IF NOT EXISTS).
 function addColumn(table, column, def) {

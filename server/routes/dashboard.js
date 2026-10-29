@@ -54,6 +54,7 @@ module.exports = function dashboardRoutes(pool) {
       },
       todo: {
         diffOpen: sales.concat(buys).filter((i) => i.diffOpen).length,
+        dupOpen: sales.concat(buys).filter((i) => i.dupOpen).length,
         zeroPrice: sales.concat(buys).filter((i) => i.zeroPriceLines > 0).length,
         overpaid: sales.concat(buys).filter((i) => i.status === 'lebih_bayar').length,
         unallocatedSale: round2(unalloc.find((u) => u.kind === 'sale')?.amt || 0),

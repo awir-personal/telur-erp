@@ -96,20 +96,20 @@ export default function ImportPage() {
               <thead className="sticky top-0"><tr><th>No Inv</th><th>Tanggal</th><th>Nama</th><th>Barang</th><th>Total sheet</th><th>Hitungan</th><th>Selisih</th><th>Pembayaran</th><th>PO / catatan</th><th>Peringatan</th></tr></thead>
               <tbody>
                 {plan.invoices.map((i) => (
-                  <tr key={i.number} className={i.exists ? 'text-slate-400 line-through' : i.diff ? 'bg-red-50' : i.warnings.length ? 'bg-amber-50' : ''}>
-                    <td className="font-medium">{i.number}</td><td>{tgl(i.date)}</td><td>{i.partyName}</td>
+                  <tr key={`${i.number}#${i.seq}`} className={i.exists ? 'text-slate-400 line-through' : i.diff ? 'bg-red-50' : i.warnings.length ? 'bg-amber-50' : ''}>
+                    <td className="font-medium">{i.number}{i.dupCount > 1 && <span className="ml-1 rounded bg-amber-200 px-1 text-[10px] font-semibold text-amber-900" title={`No Inv ini ada di ${i.dupCount} baris sheet - masuk apa adanya, beri catatan setelah import`}>dobel {i.seq}/{i.dupCount}</span>}<div className="text-[10px] text-slate-400">baris {i.rows[0]}</div></td><td>{tgl(i.date)}</td><td>{i.partyName}</td>
                     <td className="whitespace-normal">{i.lines.map((l) => `${l.itemName} ${l.qty} ${l.unitName} × ${rp(l.price)}`).join('; ')}</td>
                     <td className="text-right">{rp(i.importedTotal)}</td><td className="text-right">{rp(i.computedTotal)}</td>
                     <td className={`text-right ${i.diff ? 'font-bold text-red-600' : ''}`}>{i.diff ? rp(i.diff) : ''}</td>
                     <td className="whitespace-normal">{i.payments.map((p) => `${tgl(p.date)} ${METHOD[p.method]} ${rp(p.amount)}`).join('; ')}</td>
                     <td className="whitespace-normal">{[i.poRef, i.notes].filter(Boolean).join(' | ')}</td>
-                    <td className="min-w-[260px] whitespace-normal text-amber-800">{i.exists ? 'Nomor sudah ada di database — dilewati' : i.warnings.join(' • ')}</td>
+                    <td className="min-w-[260px] whitespace-normal text-amber-800">{i.exists ? 'Sudah ada di database — dilewati' : i.warnings.join(' • ')}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="my-2 text-xs text-slate-500">Harga beli tidak ada di sheet, jadi isi lewat Edit invoice bila ingin margin. Retur/susut di kolom Status hanya disimpan sebagai catatan. Catat nominalnya lewat "Penyesuaian" di detail invoice.</p>
+          <p className="my-2 text-xs text-slate-500">1 baris sheet = 1 invoice, apa adanya: No Inv yang muncul di beberapa baris masuk sebagai beberapa invoice bernomor sama (label "dobel") dan muncul di daftar tindak lanjut sampai diberi catatan. Harga beli tidak ada di sheet, jadi isi lewat Edit invoice bila ingin margin. Retur/susut di kolom Status hanya disimpan sebagai catatan. Catat nominalnya lewat "Penyesuaian" di detail invoice.</p>
           <button className="btn-primary" onClick={commit} disabled={a.busy || !fresh.length || (plan.errors.length > 0 && !ignoreErrors)}>Import {fresh.length} invoice</button>
         </div>
       )}

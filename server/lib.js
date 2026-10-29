@@ -61,6 +61,9 @@ async function loadInvoices(db, where = '1=1', params = [], order = 'i.date DESC
     `SELECT a.invoice_id, SUM(a.amount) AS paid, MAX(p.date) AS last_paid, GROUP_CONCAT(DISTINCT p.method) AS methods
      FROM allocations a JOIN payments p ON p.id = a.payment_id WHERE a.invoice_id IN (?) GROUP BY a.invoice_id`, [ids]);
   const [adj] = await db.query('SELECT invoice_id, SUM(amount) AS adjusted FROM adjustments WHERE invoice_id IN (?) GROUP BY invoice_id', [ids]);
+  // v3.3: No Inv yang dipakai >1 invoice (hasil import apa adanya) -> wajib diberi catatan oleh user
+  const [dups] = await db.query('SELECT kind, number, COUNT(*) AS n FROM invoices GROUP BY kind, number HAVING n > 1');
+  const dupM = new Map(dups.map((d) => [`${d.kind}|${d.number}`, d.n]));
   const byInv = (rows) => new Map(rows.map((r) => [r.invoice_id, r]));
   const paidM = byInv(paid), adjM = byInv(adj);
   const linesM = new Map(ids.map((id) => [id, []]));
@@ -68,7 +71,8 @@ async function loadInvoices(db, where = '1=1', params = [], order = 'i.date DESC
   return invs.map((i) => {
     const p = paidM.get(i.id);
     const s = summarize(linesM.get(i.id), p?.paid || 0, adjM.get(i.id)?.adjusted || 0, i.imported_total);
-    return { ...i, lines: linesM.get(i.id), last_paid: p?.last_paid || null, methods: p?.methods || null, ...s, diffOpen: s.importDiff !== 0 && !i.diff_note };
+    const dupCount = dupM.get(`${i.kind}|${i.number}`) || 1;
+    return { ...i, lines: linesM.get(i.id), last_paid: p?.last_paid || null, methods: p?.methods || null, ...s, diffOpen: s.importDiff !== 0 && !i.diff_note, dupCount, dupOpen: dupCount > 1 && !i.dup_note };
   });
 }
 

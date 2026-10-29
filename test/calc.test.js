@@ -53,34 +53,39 @@ test('aging bucket', () => {
   assert.equal(C.addDays('2026-01-31', 30), '2026-03-02');
 });
 
-test('import sheet contoh user: 16 invoice, 3860 digabung, selisih 16.070 terdeteksi', () => {
+test('import sheet contoh user: 1 baris = 1 invoice apa adanya (v3.3), 3860 jadi 2 invoice bernomor sama', () => {
   const plan = parseSheet(sample);
   assert.equal(plan.error, undefined);
   assert.deepEqual(plan.errors, []);
-  assert.equal(plan.invoices.length, 16);
+  assert.equal(plan.invoices.length, 17);
   assert.deepEqual(plan.items, ['Telor Curah', 'Telor Omega', 'Telor Putih', 'Tray/Peti', 'Telor Retak', 'Telor Bocor']);
-  const by = Object.fromEntries(plan.invoices.map((i) => [i.number, i]));
+  const one = (no, seq = 1) => plan.invoices.find((i) => i.number === no && i.seq === seq);
 
-  const i3860 = by['3860'];
-  assert.equal(i3860.lines.length, 6);
-  assert.equal(i3860.importedTotal, 11233113);
-  assert.equal(i3860.computedTotal, 11217043);
-  assert.equal(i3860.diff, 16070);
-  assert.equal(i3860.payments.length, 1);
-  assert.equal(i3860.payments[0].amount, 10933000);
-  assert.equal(i3860.payments[0].method, 'cash');
-  assert.ok(i3860.warnings.some((w) => w.includes('Nominal kosong')));
-  assert.equal(i3860.lines.find((l) => l.itemName === 'Tray/Peti').unitName, 'tray');
+  // 3860 di 2 baris sheet -> 2 invoice, nomor sama, data tiap baris tidak diubah
+  const [a, b] = [one('3860', 1), one('3860', 2)];
+  assert.deepEqual([a.rows, b.rows, a.dupCount, b.dupCount], [[12], [13], 2, 2]);
+  assert.equal(a.lines.length, 5);
+  assert.equal(a.importedTotal, 9073113);
+  assert.equal(a.computedTotal, 9057043);
+  assert.equal(a.diff, 16070); // selisih 16.070 tetap terdeteksi, di baris asalnya
+  assert.equal(a.payments.length, 0);
+  assert.ok(a.warnings.some((w) => w.includes('Nominal kosong')));
+  assert.equal(a.lines.find((l) => l.itemName === 'Tray/Peti').unitName, 'tray');
+  assert.deepEqual([b.lines.length, b.importedTotal, b.diff], [1, 2160000, 0]);
+  assert.equal(b.payments.length, 1);
+  assert.equal(b.payments[0].amount, 10933000);
+  assert.equal(b.payments[0].method, 'cash');
+  for (const x of [a, b]) assert.match(x.warnings[0], /No Inv 3860 ada di 2 baris sheet \(baris 12 \(Cash\), 13 \(Cash\)\) — masuk apa adanya/);
 
-  // Semua invoice lain cocok dengan total sheet
-  for (const inv of plan.invoices) if (inv.number !== '3860') assert.equal(inv.diff, 0, inv.number);
-  assert.equal(by['3862'].lines[0].qty, 100.8);
-  assert.equal(by['3851'].poRef, 'PO 7 ikat Curah');
-  assert.equal(by['3856'].notes, null); // tanda '-' diabaikan
-  assert.ok(by['3855'].warnings.some((w) => w.includes('retur')));
-  assert.equal(by['3858'].lines.length, 2);
-  assert.ok(by['3858'].warnings.some((w) => w.includes('harga kosong')));
-  assert.equal(by['3853'].payments[0].date, '2026-01-02');
+  // Semua invoice lain cocok dengan total sheet & tidak bertanda dobel
+  for (const inv of plan.invoices) if (inv.number !== '3860') { assert.equal(inv.diff, 0, inv.number); assert.equal(inv.dupCount, 1, inv.number); }
+  assert.equal(one('3862').lines[0].qty, 100.8);
+  assert.equal(one('3851').poRef, 'PO 7 ikat Curah');
+  assert.equal(one('3856').notes, null); // tanda '-' diabaikan
+  assert.ok(one('3855').warnings.some((w) => w.includes('retur')));
+  assert.equal(one('3858').lines.length, 2);
+  assert.ok(one('3858').warnings.some((w) => w.includes('harga kosong')));
+  assert.equal(one('3853').payments[0].date, '2026-01-02');
 });
 
 test('import layout sheet Okt 2026: kolom centang A-B diabaikan (baca mulai kolom C), "Nama Pelanggan", "Tgl Tagih"', () => {
@@ -108,8 +113,14 @@ test('import layout sheet Okt 2026: kolom centang A-B diabaikan (baca mulai kolo
   assert.equal(ekor.invoices.length, lama.invoices.length);
 });
 
-test('import: header tidak ada / nomor sama untuk pihak berbeda', () => {
+test('import: header tidak ada / nomor sama untuk pihak berbeda tetap masuk', () => {
   assert.ok(parseSheet([['a', 'b']]).error);
+  // nomor sama untuk nama BEDA: tidak error lagi (v3.3) - 2 invoice terpisah, nomor sama, ditandai
   const other = sample[2].map((v, i) => (i === 2 ? 'Orang Lain' : v));
-  assert.equal(parseSheet([...sample.slice(0, 3), other]).errors.length, 1);
+  const p = parseSheet([...sample.slice(0, 3), other]);
+  assert.deepEqual(p.errors, []);
+  assert.deepEqual(p.invoices.map((i) => [i.number, i.seq, i.partyName, i.dupCount]), [['3851', 1, 'Home Made', 2], ['3851', 2, 'Orang Lain', 2]]);
+  // seq dihitung sebelum validasi: baris tengah yang error tidak menggeser urutan baris sesudahnya
+  const rusak = sample[2].map((v, i) => (i === 0 ? 'bukan tanggal' : v));
+  assert.deepEqual(parseSheet([...sample.slice(0, 3), rusak, other]).invoices.map((i) => i.seq), [1, 3]);
 });

@@ -36,3 +36,4 @@ Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/t
 - Heredoc Bash merusak backslash; pakai tool Edit/Write untuk kode yang penuh escape.
 - Nilai angka dari mysql2 sudah berupa number (`decimalNumbers: true`). `{x && <JSX/>}` dengan x = 0 akan merender "0" di layar.
 - Import sheet dibaca mulai kolom "Tanggal" (sheet user punya kolom centang A-B sejak Okt 2026). Sarankan upload .xlsx, bukan .csv: CSV Google Sheet membulatkan angka tampilan sehingga muncul selisih total palsu.
+- **No Inv tidak unik sejak v3.3**: import = 1 baris sheet 1 invoice apa adanya (keputusan user), nomor dobel ditandai sampai diberi catatan. Jangan kembalikan ke "digabung" tanpa bertanya. Invoice manual tetap dicek dobel di aplikasi, bukan di DB.

@@ -202,30 +202,60 @@ test('laporan aging & margin & stok', async () => {
 test('import sheet contoh: preview, commit, selisih 3860 muncul & bisa dijustifikasi', async () => {
   assert.equal((await call('POST', '/import/preview', { rows: sample }, S.fin)).status, 403);
   const prev = await ok(call('POST', '/import/preview', { rows: sample }, S.admin));
-  assert.equal(prev.invoices.length, 16);
+  assert.equal(prev.invoices.length, 17); // v3.3: 1 baris sheet = 1 invoice, 3860 (2 baris) jadi 2 invoice
   const res = await ok(call('POST', '/import/commit', { rows: sample }, S.admin));
-  assert.equal(res.imported.length, 16);
+  assert.equal(res.imported.length, 17);
+  assert.ok(res.imported.includes('3860 (baris 12)') && res.imported.includes('3860 (baris 13)'));
   assert.ok(res.created.customers.includes('Home Made'));
   assert.ok(res.created.items.length === 0); // semua barang sudah ada di master
   const again = await ok(call('POST', '/import/commit', { rows: sample }, S.admin));
-  assert.equal(again.imported.length, 0); // tidak dobel
-  assert.equal(again.skipped.length, 16);
+  assert.equal(again.imported.length, 0); // tidak dobel, termasuk kedua baris 3860
+  assert.equal(again.skipped.length, 17);
+  assert.ok(again.skipped.includes('3860 (baris 13): baris ini sudah pernah diimport'));
+  assert.ok((await ok(call('POST', '/import/preview', { rows: sample }, S.admin))).invoices.every((i) => i.exists));
 
+  // 3860: 2 invoice bernomor sama, data tiap baris apa adanya; Nominal baris ke-2 membayar keduanya
   const list = await ok(call('GET', '/invoices?kind=sale&q=3860', null, S.fin));
-  const i3860 = list.find((x) => x.number === '3860');
-  assert.equal(i3860.total, 11217043);
-  assert.equal(i3860.importDiff, 16070);
-  assert.equal(i3860.diffOpen, true);
-  assert.equal(i3860.paid, 10933000);
+  const both = list.filter((x) => x.number === '3860').sort((x, y) => x.import_seq - y.import_seq);
+  assert.equal(both.length, 2);
+  const [i3860, i3860b] = both;
+  assert.deepEqual([i3860.import_seq, i3860.total, i3860.importDiff, i3860.diffOpen], [1, 9057043, 16070, true]);
+  assert.deepEqual([i3860b.import_seq, i3860b.total, i3860b.paid, i3860b.status, i3860b.importDiff], [2, 2160000, 2160000, 'lunas', 0]);
+  assert.equal(i3860.paid, 10933000 - 2160000);
+  for (const x of both) assert.deepEqual([x.dupCount, x.dupOpen], [2, true]);
+  const pays3860 = await ok(call('GET', `/payments?kind=sale&party_id=${i3860.party_id}`, null, S.fin));
+  assert.equal(pays3860.find((p) => p.amount === 10933000).unallocated, 0);
   const selisih = await ok(call('GET', '/invoices?kind=sale&status=selisih', null, S.fin));
-  assert.ok(selisih.some((x) => x.number === '3860'));
+  assert.equal(selisih.filter((x) => x.number === '3860').length, 2); // nomor dobel belum dicatat
   assert.ok(selisih.some((x) => x.number === '3858')); // harga kosong
+  assert.equal((await ok(call('GET', '/dashboard', null, S.fin))).todo.dupOpen, 2);
+
+  // catatan No Inv dobel -> hilang dari daftar tindak lanjut
+  assert.equal((await call('PUT', `/invoices/${i3860b.id}/dup-note`, { dup_note: 'x' }, S.fin)).status, 200);
+  await ok(call('PUT', `/invoices/${i3860b.id}/dup-note`, { dup_note: 'Baris tambahan Super (Cash) di invoice yang sama' }, S.fin));
+  assert.equal((await ok(call('GET', `/invoices/${i3860b.id}`, null, S.fin))).dupOpen, false);
+  assert.equal((await ok(call('GET', `/invoices/${i3860.id}`, null, S.fin))).dupOpen, true); // tiap invoice dicatat sendiri
+  assert.equal((await ok(call('GET', '/dashboard', null, S.fin))).todo.dupOpen, 1);
+
+  // invoice manual tetap tidak boleh memakai nomor yang sudah ada; invoice dobel hasil import tetap bisa diedit
+  const manualBody = { kind: 'sale', date: '2026-01-02', party_id: i3860.party_id, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 1, price: 1 }] };
+  assert.equal((await call('POST', '/invoices', { ...manualBody, number: '3860' }, S.admin)).status, 400);
+  const full = await ok(call('GET', `/invoices/${i3860b.id}`, null, S.fin));
+  await ok(call('PUT', `/invoices/${i3860b.id}`, { ...manualBody, number: '3860', notes: 'diedit', lines: full.lines.map((l) => ({ item_id: l.item_id, unit_id: l.unit_id, qty: l.qty, price: l.price })) }, S.admin));
+  assert.equal((await ok(call('GET', `/invoices/${i3860b.id}`, null, S.fin))).notes, 'diedit');
+
+  // nomor yang dulu diimport dengan cara LAMA (digabung, import_seq NULL) / diketik manual -> semua barisnya dilewati
+  const legacy = await ok(call('POST', '/invoices', { ...manualBody, number: 'LAMA-2099' }, S.admin));
+  const rowsLegacy = [sample[0], sample[1], ...[1, 2].map(() => ['5-Jan-99', 'LAMA-2099', 'Cash', '1', '1.000', ...Array(10).fill(''), '1.000', '', '', ''])];
+  const rl = await ok(call('POST', '/import/commit', { rows: rowsLegacy }, S.admin));
+  assert.deepEqual([rl.imported.length, rl.skipped], [0, ['LAMA-2099 (baris 3): nomor sudah ada', 'LAMA-2099 (baris 4): nomor sudah ada']]);
+  await ok(call('DELETE', `/invoices/${legacy.id}`, null, S.admin));
 
   assert.equal((await call('POST', `/invoices/${i3860.id}/accept-import-total`, {}, S.fin)).status, 400); // alasan wajib
   await ok(call('POST', `/invoices/${i3860.id}/accept-import-total`, { note: 'Ongkir 16.070 tidak tercatat di kolom' }, S.fin));
   const after = await ok(call('GET', `/invoices/${i3860.id}`, null, S.fin));
   assert.equal(after.diffOpen, false);
-  assert.equal(after.outstanding, 11233113 - 10933000);
+  assert.equal(after.outstanding, 9073113 - (10933000 - 2160000)); // = 300.113, sama seperti saat masih digabung
 
   const s = await ok(call('GET', '/settings', null, S.fin));
   assert.ok(Number(s.next_sale_no) >= 5012);

@@ -1,6 +1,6 @@
 // Tampilan format sheet: Tanggal | No Inv | Nama | (Qty, Harga) per barang | Total | Tgl Byr | Dibayar | Sisa | Status | Keterangan
 import React, { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { get, qs } from '../api';
 import { ErrorBox, PageTitle, StatusBadge, useAuth, useLoad } from '../components/ui';
 import { firstOfMonth, qty, rp, tgl, today, STATUS } from '../format';
@@ -12,7 +12,9 @@ export default function InvoicesPage({ kind }) {
   const { perms } = useAuth();
   const nav = useNavigate();
   const isSale = kind === 'sale';
-  const [f, setF] = useState({ from: firstOfMonth(), to: today(), status: '', q: '' });
+  const [sp] = useSearchParams();
+  // ?q=... (mis. dari kartu 'No Inv dobel') -> cari di semua tanggal
+  const [f, setF] = useState(() => (sp.get('q') ? { from: '', to: '', status: '', q: sp.get('q') } : { from: firstOfMonth(), to: today(), status: '', q: '' }));
   const items = useLoad(() => get('/items'), []);
   const list = useLoad(() => get('/invoices' + qs({ kind, ...f })), [kind, f.from, f.to, f.status, f.q]);
 
@@ -76,7 +78,7 @@ export default function InvoicesPage({ kind }) {
             <option value="sebagian">Sebagian</option>
             <option value="lunas">Lunas</option>
             <option value="lebih_bayar">Lebih bayar</option>
-            <option value="selisih">⚠ Ada selisih / harga kosong</option>
+            <option value="selisih">⚠ Ada selisih / No Inv dobel / harga kosong</option>
           </select>
         </label>
         <label className="col-span-2"><span className="lbl">Cari (no, nama, PO, catatan)</span><input className="inp" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} /></label>
@@ -96,11 +98,11 @@ export default function InvoicesPage({ kind }) {
             {list.loading && !rows.length && <tr><td colSpan={9 + cols.length * 2} className="p-3 text-center text-slate-500">Memuat…</td></tr>}
             {!list.loading && !rows.length && <tr><td colSpan={9 + cols.length * 2} className="p-3 text-center text-slate-500">Tidak ada data pada filter ini</td></tr>}
             {rows.map((r) => {
-              const warn = r.diffOpen || r.zeroPriceLines > 0;
+              const warn = r.diffOpen || r.dupOpen || r.zeroPriceLines > 0;
               return (
                 <tr key={r.id} className={`cursor-pointer hover:bg-sky-50 ${ROW_BG[r.status]}`} onClick={() => nav(`/invoice/${r.id}`)}>
                   <td>{tgl(r.date)}</td>
-                  <td className="font-medium">{r.number}</td>
+                  <td className="font-medium">{r.number}{r.dupCount > 1 && <span className={`ml-1 rounded px-1 text-[10px] font-semibold ${r.dupOpen ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-600'}`} title={r.dupOpen ? `No Inv dipakai ${r.dupCount} invoice - belum diberi catatan` : `No Inv dipakai ${r.dupCount} invoice: ${r.dup_note}`}>dobel</span>}</td>
                   <td>{r.party_name}</td>
                   {cols.flatMap((c) => {
                     const [q, h, zero] = cell(r, c.id, c.unit_name);
@@ -110,7 +112,7 @@ export default function InvoicesPage({ kind }) {
                   <td>{tgl(r.last_paid)}</td>
                   <td className="text-right">{rp(r.paid || '')}</td>
                   <td className={`text-right ${r.outstanding ? 'font-semibold' : ''}`}>{rp(r.outstanding || '')}</td>
-                  <td><StatusBadge status={r.status} />{warn && <span title={r.diffOpen ? `Selisih total sheet ${rp(r.importDiff)} belum dijustifikasi` : 'Ada harga kosong'} className="ml-1 text-red-600">⚠</span>}</td>
+                  <td><StatusBadge status={r.status} />{warn && <span title={r.diffOpen ? `Selisih total sheet ${rp(r.importDiff)} belum dijustifikasi` : r.dupOpen ? 'No Inv dobel belum diberi catatan' : 'Ada harga kosong'} className="ml-1 text-red-600">⚠</span>}</td>
                   <td className="max-w-[280px] truncate" title={[r.po_ref, r.notes].filter(Boolean).join(' | ')}>{[r.po_ref, r.notes].filter(Boolean).join(' | ')}</td>
                 </tr>
               );
@@ -131,7 +133,7 @@ export default function InvoicesPage({ kind }) {
           )}
         </table>
       </div>
-      <p className="mt-2 text-xs text-slate-500">Klik baris untuk detail, pembayaran, retur, dan pembulatan. Warna baris: hijau = lunas, kuning = sebagian, ungu = lebih bayar. ⚠ = selisih total sheet belum dijustifikasi / ada harga kosong.</p>
+      <p className="mt-2 text-xs text-slate-500">Klik baris untuk detail, pembayaran, retur, dan pembulatan. Warna baris: hijau = lunas, kuning = sebagian, ungu = lebih bayar. ⚠ = selisih total sheet belum dijustifikasi / No Inv dobel belum diberi catatan / ada harga kosong.</p>
     </div>
   );
 }
