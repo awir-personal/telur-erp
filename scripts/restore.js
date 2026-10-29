@@ -18,7 +18,9 @@ async function restore(pool, file) {
   try {
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     await conn.beginTransaction();
-    for (const t of [...BACKUP_TABLES].reverse()) await conn.query(`DELETE FROM \`${t}\``); // data bawaan migrasi diganti isi backup
+    // data bawaan migrasi diganti isi backup - KECUALI tabel yang tidak ada di file (backup versi lama, mis. sebelum v4.0
+    // tidak punya "companies"): data bawaan migrasinya dipertahankan, kolom company_id baris lama otomatis 1 (APG).
+    for (const t of [...BACKUP_TABLES].reverse()) if (data.tables[t]) await conn.query(`DELETE FROM \`${t}\``);
     const counts = {};
     for (const t of BACKUP_TABLES) {
       const rows = data.tables[t] || [];

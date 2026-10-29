@@ -9,18 +9,20 @@ const KINDS = ['biaya', 'pemasukan', 'modal', 'prive', 'transfer'];
 const IN_KINDS = ['pemasukan', 'modal'];
 
 // Semua mutasi rekening sampai tanggal `to` (inklusif). amount bertanda: + masuk, − keluar.
-async function movements(db, { accountId = null, to = '9999-12-31' } = {}) {
+// v4.0: per perusahaan (cid).
+async function movements(db, cid, { accountId = null, to = '9999-12-31' } = {}) {
+  if (!Number(cid)) throw new Error('movements: company id wajib');
   const acc = accountId ? ' AND p.account_id = ?' : ' AND p.account_id IS NOT NULL';
-  const args = accountId ? [to, accountId] : [to];
+  const args = accountId ? [cid, to, accountId] : [cid, to];
   const [pays] = await db.query(
     `SELECT p.account_id, p.date, p.id AS ref_id, 'payment' AS src, p.kind, pt.name AS party_name, p.method, p.reference, p.notes AS note,
        CASE WHEN p.kind = 'sale' THEN p.amount ELSE -p.amount END AS amount
-     FROM payments p JOIN parties pt ON pt.id = p.party_id WHERE p.date <= ?${acc}`, args);
+     FROM payments p JOIN parties pt ON pt.id = p.party_id WHERE p.company_id = ? AND p.date <= ?${acc}`, args);
   const cAcc = accountId ? ' AND (c.account_id = ? OR c.to_account_id = ?)' : '';
   const [txns] = await db.query(
     `SELECT c.*, cc.name AS category_name, a1.name AS account_name, a2.name AS to_account_name FROM cash_txns c
      LEFT JOIN cash_categories cc ON cc.id = c.category_id JOIN accounts a1 ON a1.id = c.account_id LEFT JOIN accounts a2 ON a2.id = c.to_account_id
-     WHERE c.date <= ?${cAcc}`, accountId ? [to, accountId, accountId] : [to]);
+     WHERE c.company_id = ? AND c.date <= ?${cAcc}`, accountId ? [cid, to, accountId, accountId] : [cid, to]);
   const out = pays.map((p) => ({
     account_id: p.account_id, date: p.date, src: 'payment', ref_id: p.ref_id, amount: p.amount,
     label: `${p.kind === 'sale' ? 'Terima dari' : 'Bayar ke'} ${p.party_name}`, note: [p.reference, p.note].filter(Boolean).join(' · ') || null,
@@ -56,7 +58,7 @@ module.exports = function cashRoutes(pool) {
   const W = requirePerm('cash');
 
   // ===== Rekening =====
-  r.get('/accounts', async (req, res) => res.json((await pool.query('SELECT * FROM accounts ORDER BY active DESC, sort_order, id'))[0]));
+  r.get('/accounts', async (req, res) => res.json((await pool.query('SELECT * FROM accounts WHERE company_id = ? ORDER BY active DESC, sort_order, id', [req.cid]))[0]));
   const accBody = (b) => ({
     name: reqStr(b.name, 'Nama rekening', 80), type: b.type === 'bank' ? 'bank' : 'kas',
     bank: b.type === 'bank' ? optStr(b.bank, 30) : null, account_no: optStr(b.account_no, 40),
@@ -66,13 +68,15 @@ module.exports = function cashRoutes(pool) {
   });
   r.post('/accounts', W, async (req, res) => {
     const a = accBody(req.body);
-    const [ins] = await pool.query('INSERT INTO accounts SET ?', [a]).catch((e) => { throw e.code === 'ER_DUP_ENTRY' ? bad('Nama rekening sudah ada') : e; });
+    const [ins] = await pool.query('INSERT INTO accounts SET ?', [{ ...a, company_id: req.cid }]).catch((e) => { throw e.code === 'ER_DUP_ENTRY' ? bad('Nama rekening sudah ada') : e; });
     await log(pool, req.user, 'create', 'account', ins.insertId, a);
     res.json({ id: ins.insertId });
   });
   r.put('/accounts/:id', W, async (req, res) => {
+    const [[own]] = await pool.query('SELECT id FROM accounts WHERE id = ? AND company_id = ?', [req.params.id, req.cid]);
+    if (!own) throw new HttpError(404, 'Rekening tidak ditemukan');
     const a = accBody(req.body);
-    await pool.query('UPDATE accounts SET ? WHERE id = ?', [a, req.params.id]).catch((e) => { throw e.code === 'ER_DUP_ENTRY' ? bad('Nama rekening sudah ada') : e; });
+    await pool.query('UPDATE accounts SET ? WHERE id = ? AND company_id = ?', [a, own.id, req.cid]).catch((e) => { throw e.code === 'ER_DUP_ENTRY' ? bad('Nama rekening sudah ada') : e; });
     await log(pool, req.user, 'update', 'account', Number(req.params.id), a);
     res.json({ ok: true });
   });
@@ -95,21 +99,21 @@ module.exports = function cashRoutes(pool) {
   // ===== Saldo semua rekening =====
   r.get('/cash/balances', async (req, res) => {
     const asOf = req.query.as_of || todayWIB();
-    const [accs] = await pool.query('SELECT * FROM accounts ORDER BY active DESC, sort_order, id');
-    const moves = await movements(pool, { to: asOf });
+    const [accs] = await pool.query('SELECT * FROM accounts WHERE company_id = ? ORDER BY active DESC, sort_order, id', [req.cid]);
+    const moves = await movements(pool, req.cid, { to: asOf });
     const rows = accs.map((a) => ({ ...a, ...balanceOf(a, moves, asOf) }));
     const [[noAcc]] = await pool.query(`SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN kind = 'sale' THEN amount ELSE -amount END), 0) AS net
-      FROM payments WHERE account_id IS NULL AND date <= ?`, [asOf]);
+      FROM payments WHERE company_id = ? AND account_id IS NULL AND date <= ?`, [req.cid, asOf]);
     res.json({ asOf, accounts: rows, total: round2(rows.reduce((s, a) => s + a.balance, 0)), paymentsWithoutAccount: { count: noAcc.n, net: round2(noAcc.net) } });
   });
 
   // ===== Buku rekening (mutasi + saldo berjalan) =====
   r.get('/cash/ledger', async (req, res) => {
-    const [[acc]] = await pool.query('SELECT * FROM accounts WHERE id = ?', [req.query.account_id]);
+    const [[acc]] = await pool.query('SELECT * FROM accounts WHERE id = ? AND company_id = ?', [req.query.account_id, req.cid]);
     if (!acc) throw new HttpError(404, 'Rekening tidak ditemukan');
     const to = req.query.to || todayWIB();
     const from = req.query.from || '0000-00-00';
-    const moves = await movements(pool, { accountId: acc.id, to });
+    const moves = await movements(pool, req.cid, { accountId: acc.id, to });
     const start = acc.opening_date || '0000-00-00';
     let bal = Number(acc.opening_balance);
     const rows = [];
@@ -129,8 +133,8 @@ module.exports = function cashRoutes(pool) {
 
   // ===== Transaksi kas =====
   r.get('/cash/txns', async (req, res) => {
-    const where = ['1=1'];
-    const p = [];
+    const where = ['c.company_id = ?'];
+    const p = [req.cid];
     if (req.query.from) { where.push('c.date >= ?'); p.push(req.query.from); }
     if (req.query.to) { where.push('c.date <= ?'); p.push(req.query.to); }
     if (req.query.kind) { where.push('c.kind = ?'); p.push(req.query.kind); }
@@ -141,7 +145,7 @@ module.exports = function cashRoutes(pool) {
     res.json(rows);
   });
 
-  async function txnBody(b) {
+  async function txnBody(b, cid) {
     if (!KINDS.includes(b.kind)) throw bad('Jenis transaksi tidak valid');
     const t = {
       date: reqDate(b.date), kind: b.kind, account_id: reqNum(b.account_id, 'Rekening'),
@@ -157,26 +161,26 @@ module.exports = function cashRoutes(pool) {
       if (!c || c.kind !== b.kind) throw bad('Kategori tidak cocok dengan jenis transaksi');
     }
     const ids = [t.account_id, t.to_account_id].filter(Boolean);
-    const [accs] = await pool.query('SELECT id FROM accounts WHERE id IN (?)', [ids]);
+    const [accs] = await pool.query('SELECT id FROM accounts WHERE id IN (?) AND company_id = ?', [ids, cid]);
     if (accs.length !== ids.length) throw bad('Rekening tidak ditemukan');
     return t;
   }
   r.post('/cash/txns', W, async (req, res) => {
-    const t = await txnBody(req.body);
-    const [ins] = await pool.query('INSERT INTO cash_txns SET ?', [{ ...t, created_by: req.user.id }]);
+    const t = await txnBody(req.body, req.cid);
+    const [ins] = await pool.query('INSERT INTO cash_txns SET ?', [{ ...t, company_id: req.cid, created_by: req.user.id }]);
     await log(pool, req.user, 'create', `cash_${t.kind}`, ins.insertId, t);
     res.json({ id: ins.insertId });
   });
   r.put('/cash/txns/:id', W, async (req, res) => {
-    const [[old]] = await pool.query('SELECT * FROM cash_txns WHERE id = ?', [req.params.id]);
+    const [[old]] = await pool.query('SELECT * FROM cash_txns WHERE id = ? AND company_id = ?', [req.params.id, req.cid]);
     if (!old) throw new HttpError(404, 'Transaksi tidak ditemukan');
-    const t = await txnBody(req.body);
+    const t = await txnBody(req.body, req.cid);
     await pool.query('UPDATE cash_txns SET ? WHERE id = ?', [t, old.id]);
     await log(pool, req.user, 'update', `cash_${t.kind}`, old.id, { before: { date: old.date, amount: old.amount, account_id: old.account_id }, after: t });
     res.json({ ok: true });
   });
   r.delete('/cash/txns/:id', W, async (req, res) => {
-    const [[old]] = await pool.query('SELECT * FROM cash_txns WHERE id = ?', [req.params.id]);
+    const [[old]] = await pool.query('SELECT * FROM cash_txns WHERE id = ? AND company_id = ?', [req.params.id, req.cid]);
     if (!old) throw new HttpError(404, 'Transaksi tidak ditemukan');
     const [[rec]] = await pool.query("SELECT id FROM bank_lines WHERE match_src = 'cash' AND match_id = ? AND status = 'matched'", [old.id]);
     if (rec) throw bad('Transaksi ini sudah dicocokkan di rekonsiliasi bank. Batalkan cocoknya dulu.');

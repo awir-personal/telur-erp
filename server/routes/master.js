@@ -1,6 +1,6 @@
 const express = require('express');
 const { requirePerm } = require('../auth');
-const { bad, log, reqStr, optStr, reqNum } = require('../lib');
+const { bad, log, skey, reqStr, optStr, reqNum, HttpError } = require('../lib');
 
 const dupAs = (msg) => (e) => { throw e.code === 'ER_DUP_ENTRY' ? bad(msg) : e; };
 const KINDS = ['customer', 'supplier'];
@@ -12,7 +12,7 @@ module.exports = function masterRoutes(pool) {
   // ===== Customer & supplier =====
   r.get('/parties', async (req, res) => {
     const kind = KINDS.includes(req.query.kind) ? req.query.kind : 'customer';
-    const [rows] = await pool.query('SELECT * FROM parties WHERE kind = ? ORDER BY active DESC, name', [kind]);
+    const [rows] = await pool.query('SELECT * FROM parties WHERE kind = ? AND company_id = ? ORDER BY active DESC, name', [kind, req.cid]);
     res.json(rows);
   });
 
@@ -21,32 +21,43 @@ module.exports = function masterRoutes(pool) {
       name: reqStr(b.name, 'Nama', 120), phone: optStr(b.phone, 40), address: optStr(b.address),
       term_days: reqNum(b.term_days ?? 30, 'Termin (hari)', { min: 0 }), price_rule: optStr(b.price_rule, 2000), notes: optStr(b.notes, 2000),
       active: b.active === false || b.active === 0 ? 0 : 1,
+      gta_purchase: b.gta_purchase === true || b.gta_purchase === 1 ? 1 : 0, // v4.0: penjualan ke customer ini = pembelian PT GTA
     };
+  }
+  // Customer/supplier milik perusahaan aktif (v4.0) - dipakai sebelum mengubah data turunannya.
+  async function ownParty(req, id) {
+    const [[p]] = await pool.query('SELECT id, kind FROM parties WHERE id = ? AND company_id = ?', [id, req.cid]);
+    if (!p) throw new HttpError(404, 'Customer/supplier tidak ditemukan');
+    return p;
   }
 
   r.post('/parties', W, async (req, res) => {
     if (!KINDS.includes(req.body.kind)) throw bad('Jenis tidak valid');
     const p = partyBody(req.body);
-    const [ins] = await pool.query('INSERT INTO parties SET ?', [{ kind: req.body.kind, ...p }]).catch(dupAs('Nama sudah ada'));
+    const [ins] = await pool.query('INSERT INTO parties SET ?', [{ kind: req.body.kind, company_id: req.cid, ...p, gta_purchase: req.body.kind === 'customer' ? p.gta_purchase : 0 }]).catch(dupAs('Nama sudah ada'));
     await log(pool, req.user, 'create', req.body.kind, ins.insertId, p);
     res.json({ id: ins.insertId });
   });
 
   r.put('/parties/:id', W, async (req, res) => {
-    const p = partyBody(req.body);
-    await pool.query('UPDATE parties SET ? WHERE id = ?', [p, req.params.id]).catch(dupAs('Nama sudah ada'));
+    const own = await ownParty(req, req.params.id);
+    const p = { ...partyBody(req.body) };
+    if (own.kind !== 'customer') p.gta_purchase = 0;
+    await pool.query('UPDATE parties SET ? WHERE id = ? AND company_id = ?', [p, own.id, req.cid]).catch(dupAs('Nama sudah ada'));
     await log(pool, req.user, 'update', 'party', Number(req.params.id), p);
     res.json({ ok: true });
   });
 
   // Harga khusus per customer (saran saat isi invoice — tetap bisa diketik bebas)
   r.get('/parties/:id/prices', async (req, res) => {
+    await ownParty(req, req.params.id);
     const [rows] = await pool.query(`SELECT pp.*, i.name AS item_name, u.name AS unit_name FROM party_prices pp
       JOIN items i ON i.id = pp.item_id JOIN units u ON u.id = pp.unit_id WHERE pp.party_id = ? ORDER BY i.sort_order, u.name`, [req.params.id]);
     res.json(rows);
   });
 
   r.put('/parties/:id/prices', W, async (req, res) => {
+    await ownParty(req, req.params.id);
     const rows = Array.isArray(req.body.prices) ? req.body.prices : [];
     const clean = rows.map((p) => [Number(req.params.id), Number(p.item_id), Number(p.unit_id), reqNum(p.price, 'Harga', { min: 0 }), optStr(p.note)]);
     const seen = new Set(clean.map((c) => `${c[1]}-${c[2]}`));
@@ -65,6 +76,7 @@ module.exports = function masterRoutes(pool) {
   // Saran harga: harga khusus customer → kalau tidak ada, harga terakhir ke pihak ini untuk barang+satuan yang sama.
   r.get('/price-suggest', async (req, res) => {
     const { party_id, item_id, unit_id } = req.query;
+    await ownParty(req, party_id);
     const [[pp]] = await pool.query('SELECT price FROM party_prices WHERE party_id = ? AND item_id = ? AND unit_id = ?', [party_id, item_id, unit_id]);
     if (pp) return res.json({ price: pp.price, source: 'master' });
     const [[last]] = await pool.query(`SELECT l.price, l.cost_price FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id
@@ -112,9 +124,17 @@ module.exports = function masterRoutes(pool) {
   });
 
   // ===== Pengaturan =====
+  // v4.0 Pengaturan per perusahaan aktif (lib.skey). last_backup_at tetap satu untuk seluruh database.
   r.get('/settings', async (req, res) => {
     const [rows] = await pool.query('SELECT k, v FROM settings');
-    res.json(Object.fromEntries(rows.map((x) => [x.k, x.v])));
+    const all = new Map(rows.map((x) => [x.k, x.v]));
+    const out = {};
+    for (const k of ['company_name', 'company_address', 'company_phone', 'next_sale_no', 'next_purchase_no']) {
+      if (all.has(skey(req.cid, k))) out[k] = all.get(skey(req.cid, k));
+    }
+    if (!out.company_name) out.company_name = req.company.name;
+    if (all.has('last_backup_at')) out.last_backup_at = all.get('last_backup_at');
+    res.json(out);
   });
   r.put('/settings', async (req, res) => {
     if (req.user.role !== 'master') return res.status(403).json({ error: 'Hanya master user' });
@@ -124,7 +144,7 @@ module.exports = function masterRoutes(pool) {
     };
     for (const [k, fn] of Object.entries(allowed)) {
       if (req.body[k] == null) continue;
-      await pool.query('INSERT INTO settings (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', [k, fn(req.body[k])]);
+      await pool.query('INSERT INTO settings (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', [skey(req.cid, k), fn(req.body[k])]);
     }
     await log(pool, req.user, 'update', 'settings', null, req.body);
     res.json({ ok: true });
@@ -133,7 +153,8 @@ module.exports = function masterRoutes(pool) {
   r.get('/logs', async (req, res) => {
     if (req.user.role !== 'master') return res.status(403).json({ error: 'Hanya master user' });
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const [rows] = await pool.query('SELECT * FROM activity_log ORDER BY id DESC LIMIT ?', [limit]);
+    // log perusahaan aktif + log umum (login, user, backup) yang tidak terikat perusahaan
+    const [rows] = await pool.query('SELECT * FROM activity_log WHERE company_id = ? OR company_id IS NULL ORDER BY id DESC LIMIT ?', [req.cid, limit]);
     res.json(rows);
   });
 

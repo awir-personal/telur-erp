@@ -9,11 +9,16 @@ export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
 export const getToken = store.get;
 export const setToken = store.set;
 
+// v4.0 Perusahaan aktif (APG / GTA) dikirim di setiap request. Kosong = server memakai APG.
+const CKEY = 'telur_erp_company';
+export const getCompany = () => { try { return localStorage.getItem(CKEY) || ''; } catch { return ''; } };
+export const setCompany = (id) => { try { id ? localStorage.setItem(CKEY, String(id)) : localStorage.removeItem(CKEY); } catch { /* abaikan */ } };
+
 export async function api(method, path, body) {
   const token = store.get();
   const res = await fetch('/api' + path, {
     method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...(getCompany() ? { 'x-company': getCompany() } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let data = null;

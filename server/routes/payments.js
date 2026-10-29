@@ -7,11 +7,11 @@ const { bad, log, tx, reqDate, reqNum, optStr, loadInvoices, HttpError } = requi
 const METHODS = ['cash', 'transfer', 'giro', 'lainnya'];
 const PARTY = { sale: 'customer', purchase: 'supplier' };
 
-async function listPayments(db, where, params) {
+async function listPayments(db, cid, where, params) {
   const [rows] = await db.query(`SELECT p.*, pt.name AS party_name, u.name AS created_by_name, ac.name AS account_name,
       COALESCE((SELECT SUM(a.amount) FROM allocations a WHERE a.payment_id = p.id), 0) AS allocated
     FROM payments p JOIN parties pt ON pt.id = p.party_id LEFT JOIN users u ON u.id = p.created_by LEFT JOIN accounts ac ON ac.id = p.account_id
-    WHERE ${where} ORDER BY p.date DESC, p.id DESC`, params);
+    WHERE p.company_id = ? AND (${where}) ORDER BY p.date DESC, p.id DESC`, [cid, ...params]);
   return rows.map((p) => ({ ...p, unallocated: round2(p.amount - p.allocated) }));
 }
 
@@ -25,13 +25,13 @@ module.exports = function paymentRoutes(pool) {
     if (req.query.from) { where.push('p.date >= ?'); params.push(req.query.from); }
     if (req.query.to) { where.push('p.date <= ?'); params.push(req.query.to); }
     if (req.query.party_id) { where.push('p.party_id = ?'); params.push(req.query.party_id); }
-    let rows = await listPayments(pool, where.join(' AND '), params);
+    let rows = await listPayments(pool, req.cid, where.join(' AND '), params);
     if (req.query.unallocated === '1') rows = rows.filter((p) => Math.abs(p.unallocated) >= EPS);
     res.json(rows);
   });
 
   r.get('/payments/:id', async (req, res) => {
-    const [p] = await listPayments(pool, 'p.id = ?', [req.params.id]);
+    const [p] = await listPayments(pool, req.cid, 'p.id = ?', [req.params.id]);
     if (!p) throw new HttpError(404, 'Pembayaran tidak ditemukan');
     const [allocs] = await pool.query(`SELECT a.*, i.number, i.date AS invoice_date FROM allocations a
       JOIN invoices i ON i.id = a.invoice_id WHERE a.payment_id = ? ORDER BY i.date, i.id`, [p.id]);
@@ -40,11 +40,11 @@ module.exports = function paymentRoutes(pool) {
 
   async function save(req, res, id) {
     const b = req.body;
-    const old = id ? (await listPayments(pool, 'p.id = ?', [id]))[0] : null;
+    const old = id ? (await listPayments(pool, req.cid, 'p.id = ?', [id]))[0] : null;
     if (id && !old) throw new HttpError(404, 'Pembayaran tidak ditemukan');
     const kind = old ? old.kind : b.kind;
     if (!PARTY[kind]) throw bad('Jenis pembayaran tidak valid');
-    const [[party]] = await pool.query('SELECT id FROM parties WHERE id = ? AND kind = ?', [b.party_id, PARTY[kind]]);
+    const [[party]] = await pool.query('SELECT id FROM parties WHERE id = ? AND kind = ? AND company_id = ?', [b.party_id, PARTY[kind], req.cid]);
     if (!party) throw bad('Pihak (customer/supplier) tidak ditemukan');
     if (!METHODS.includes(b.method)) throw bad('Metode bayar tidak valid');
     const head = {
@@ -53,7 +53,7 @@ module.exports = function paymentRoutes(pool) {
       account_id: b.account_id ? Number(b.account_id) : null, // opsional (keputusan user)
     };
     if (head.account_id) {
-      const [[acc]] = await pool.query('SELECT id FROM accounts WHERE id = ?', [head.account_id]);
+      const [[acc]] = await pool.query('SELECT id FROM accounts WHERE id = ? AND company_id = ?', [head.account_id, req.cid]);
       if (!acc) throw bad('Rekening tidak ditemukan');
     }
     const allocs = (Array.isArray(b.allocations) ? b.allocations : [])
@@ -65,7 +65,7 @@ module.exports = function paymentRoutes(pool) {
 
     // Alokasi tidak boleh melebihi sisa invoice (tidak termasuk alokasi lama dari pembayaran ini).
     if (allocs.length) {
-      const invs = await loadInvoices(pool, 'i.id IN (?)', [allocs.map((a) => a.invoice_id)]);
+      const invs = await loadInvoices(pool, req.cid, 'i.id IN (?)', [allocs.map((a) => a.invoice_id)]);
       const [mine] = id ? await pool.query('SELECT invoice_id, amount FROM allocations WHERE payment_id = ?', [id]) : [[]];
       const mineM = new Map(mine.map((m) => [m.invoice_id, m.amount]));
       for (const a of allocs) {
@@ -79,10 +79,10 @@ module.exports = function paymentRoutes(pool) {
     const payId = await tx(pool, async (c) => {
       let pid = id;
       if (id) {
-        await c.query('UPDATE payments SET ? WHERE id = ?', [head, id]);
+        await c.query('UPDATE payments SET ? WHERE id = ? AND company_id = ?', [head, id, req.cid]);
         await c.query('DELETE FROM allocations WHERE payment_id = ?', [id]);
       } else {
-        const [ins] = await c.query('INSERT INTO payments SET ?', [{ ...head, kind, created_by: req.user.id }]);
+        const [ins] = await c.query('INSERT INTO payments SET ?', [{ ...head, kind, company_id: req.cid, created_by: req.user.id }]);
         pid = ins.insertId;
       }
       if (allocs.length) await c.query('INSERT INTO allocations (payment_id, invoice_id, amount) VALUES ?', [allocs.map((a) => [pid, a.invoice_id, a.amount])]);
@@ -96,7 +96,7 @@ module.exports = function paymentRoutes(pool) {
   r.put('/payments/:id', requirePerm('payment'), (req, res) => save(req, res, Number(req.params.id)));
 
   r.delete('/payments/:id', requirePerm('payment'), async (req, res) => {
-    const [p] = await listPayments(pool, 'p.id = ?', [req.params.id]);
+    const [p] = await listPayments(pool, req.cid, 'p.id = ?', [req.params.id]);
     if (!p) throw new HttpError(404, 'Pembayaran tidak ditemukan');
     const [[rec]] = await pool.query("SELECT id FROM bank_lines WHERE match_src = 'payment' AND match_id = ? AND status = 'matched'", [p.id]);
     if (rec) throw bad('Pembayaran ini sudah dicocokkan di rekonsiliasi bank. Batalkan cocoknya dulu.');

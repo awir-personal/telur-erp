@@ -8,27 +8,28 @@ const J = require('../journal');
 const { movements } = require('./cash');
 
 // Urutan tabel untuk backup/restore (induk dulu).
-const BACKUP_TABLES = ['users', 'settings', 'parties', 'units', 'items', 'party_prices', 'invoices', 'invoice_lines', 'payments', 'allocations',
+// backup = SELURUH database (semua perusahaan).
+const BACKUP_TABLES = ['users', 'settings', 'companies', 'parties', 'units', 'items', 'party_prices', 'invoices', 'invoice_lines', 'payments', 'allocations',
   'adjustments', 'accounts', 'cash_categories', 'cash_txns', 'bank_lines', 'journal_entries', 'journal_lines', 'activity_log'];
 
 module.exports = function financeRoutes(pool) {
   const r = express.Router();
   const range = (q) => ({ from: q.from || todayWIB().slice(0, 8) + '01', to: q.to || todayWIB() });
 
-  r.get('/coa', async (req, res) => res.json([...(await J.chartOfAccounts(pool)).values()]));
+  r.get('/coa', async (req, res) => res.json([...(await J.chartOfAccounts(pool, req.cid)).values()]));
 
   r.get('/reports/journal', async (req, res) => {
     const { from, to } = range(req.query);
-    const coa = await J.chartOfAccounts(pool);
-    const entries = (await J.buildEntries(pool, to)).filter((e) => e.date >= from);
+    const coa = await J.chartOfAccounts(pool, req.cid);
+    const entries = (await J.buildEntries(pool, req.cid, to)).filter((e) => e.date >= from);
     res.json({ from, to, entries: entries.map((e) => ({ ...e, lines: e.lines.map((l) => ({ ...l, name: coa.get(l.coa)?.name || l.coa })) })) });
   });
 
   // Neraca saldo + buku besar satu akun.
   r.get('/reports/ledger', async (req, res) => {
     const { from, to } = range(req.query);
-    const coa = await J.chartOfAccounts(pool);
-    const entries = await J.buildEntries(pool, to);
+    const coa = await J.chartOfAccounts(pool, req.cid);
+    const entries = await J.buildEntries(pool, req.cid, to);
     const before = J.balances(entries, '0000-00-00', addDays(from, -1));
     const during = J.balances(entries, from, to);
     const codes = [...new Set([...coa.keys(), ...before.keys(), ...during.keys()])];
@@ -55,16 +56,16 @@ module.exports = function financeRoutes(pool) {
     res.json({ from, to, trial, totals: { debit: round2(trial.reduce((s, x) => s + x.debit, 0)), credit: round2(trial.reduce((s, x) => s + x.credit, 0)) }, detail });
   });
 
-  r.get('/reports/profit-loss', async (req, res) => { const { from, to } = range(req.query); res.json(await J.profitLoss(pool, from, to)); });
-  r.get('/reports/balance-sheet', async (req, res) => res.json(await J.balanceSheet(pool, req.query.as_of || todayWIB())));
+  r.get('/reports/profit-loss', async (req, res) => { const { from, to } = range(req.query); res.json(await J.profitLoss(pool, req.cid, from, to)); });
+  r.get('/reports/balance-sheet', async (req, res) => res.json(await J.balanceSheet(pool, req.cid, req.query.as_of || todayWIB())));
 
   // Arus kas sederhana (metode langsung) dari mutasi rekening.
   r.get('/reports/cashflow', async (req, res) => {
     const { from, to } = range(req.query);
-    const [accs] = await pool.query('SELECT * FROM accounts');
-    const all = await movements(pool, { to });
+    const [accs] = await pool.query('SELECT * FROM accounts WHERE company_id = ?', [req.cid]);
+    const all = await movements(pool, req.cid, { to });
     const [cats] = await pool.query('SELECT id, name FROM cash_categories');
-    const [txn] = await pool.query('SELECT id, category_id FROM cash_txns');
+    const [txn] = await pool.query('SELECT id, category_id FROM cash_txns WHERE company_id = ?', [req.cid]);
     const catOf = new Map(txn.map((t) => [t.id, cats.find((c) => c.id === t.category_id)?.name]));
     const inRange = (a, m) => (!a.opening_date || m.date >= a.opening_date);
     let opening = 0;
@@ -92,14 +93,14 @@ module.exports = function financeRoutes(pool) {
   // ===== Jurnal memorial (manual) =====
   r.get('/journals', async (req, res) => {
     const { from, to } = range(req.query);
-    const [es] = await pool.query('SELECT e.*, u.name AS created_by_name FROM journal_entries e LEFT JOIN users u ON u.id = e.created_by WHERE e.date BETWEEN ? AND ? ORDER BY e.date, e.id', [from, to]);
+    const [es] = await pool.query('SELECT e.*, u.name AS created_by_name FROM journal_entries e LEFT JOIN users u ON u.id = e.created_by WHERE e.company_id = ? AND e.date BETWEEN ? AND ? ORDER BY e.date, e.id', [req.cid, from, to]);
     const [ls] = es.length ? await pool.query('SELECT * FROM journal_lines WHERE entry_id IN (?) ORDER BY id', [es.map((e) => e.id)]) : [[]];
     res.json(es.map((e) => ({ ...e, lines: ls.filter((l) => l.entry_id === e.id) })));
   });
   r.post('/journals', requirePerm('cash'), async (req, res) => {
     const date = reqDate(req.body.date);
     const memo = reqStr(req.body.memo, 'Keterangan');
-    const coa = await J.chartOfAccounts(pool);
+    const coa = await J.chartOfAccounts(pool, req.cid);
     const lines = (Array.isArray(req.body.lines) ? req.body.lines : []).map((l, i) => {
       if (!coa.has(l.coa)) throw bad(`Baris ${i + 1}: akun tidak dikenal`);
       const debit = round2(Number(l.debit) || 0);
@@ -112,7 +113,7 @@ module.exports = function financeRoutes(pool) {
     const c = round2(lines.reduce((s, l) => s + l[2], 0));
     if (d !== c) throw bad(`Jurnal tidak seimbang: debit ${d} ≠ kredit ${c}`);
     const id = await tx(pool, async (cn) => {
-      const [ins] = await cn.query('INSERT INTO journal_entries (date, memo, created_by) VALUES (?,?,?)', [date, memo, req.user.id]);
+      const [ins] = await cn.query('INSERT INTO journal_entries (date, memo, created_by, company_id) VALUES (?,?,?,?)', [date, memo, req.user.id, req.cid]);
       await cn.query('INSERT INTO journal_lines (entry_id, coa, debit, credit, note) VALUES ?', [lines.map((l) => [ins.insertId, ...l])]);
       return ins.insertId;
     });
@@ -120,7 +121,7 @@ module.exports = function financeRoutes(pool) {
     res.json({ id });
   });
   r.delete('/journals/:id', requirePerm('cash'), async (req, res) => {
-    const [[e]] = await pool.query('SELECT * FROM journal_entries WHERE id = ?', [req.params.id]);
+    const [[e]] = await pool.query('SELECT * FROM journal_entries WHERE id = ? AND company_id = ?', [req.params.id, req.cid]);
     if (!e) throw new HttpError(404, 'Jurnal tidak ditemukan');
     const [ls] = await pool.query('SELECT coa, debit, credit FROM journal_lines WHERE entry_id = ?', [e.id]);
     await pool.query('DELETE FROM journal_entries WHERE id = ?', [e.id]);

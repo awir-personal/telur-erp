@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { get, post, getToken, setToken, setUnauthorizedHandler } from './api';
+import { get, post, getToken, setToken, setUnauthorizedHandler, getCompany, setCompany } from './api';
 import { AuthCtx } from './components/ui';
 import { ThemeToggle, formatVersion } from './lib/theme';
 import { LoginPage, ForcedChangePin } from './pages/Login';
@@ -37,10 +37,22 @@ export default function App() {
     loadMe();
   }, [loadMe]);
   const logout = async () => { try { await post('/auth/logout'); } catch { /* tetap keluar */ } setToken(null); setMe(null); };
+  // v4.0 multi-perusahaan: daftar perusahaan + yang sedang aktif (dari server, sesuai header X-Company)
+  const [cos, setCos] = useState(null);
+  useEffect(() => {
+    if (!me || me.user.must_change_pin) return;
+    get('/companies').then(setCos, (e) => {
+      if (e.status === 400 && getCompany()) { setCompany(null); window.location.reload(); } // perusahaan tersimpan sudah tidak ada
+    });
+  }, [me]);
+  const switchCompany = (id) => { setCompany(id); window.location.assign('/dashboard'); }; // muat ulang semua data perusahaan itu
 
   if (me === undefined) return <div className="p-6 text-sm text-slate-500">Memuat…</div>;
   if (!me) return <><LoginPage onLogin={loadMe} /><VersionFooter /></>;
   if (me.user.must_change_pin) return <><ForcedChangePin onDone={loadMe} onLogout={logout} /><VersionFooter /></>;
+  if (!cos) return <div className="p-6 text-sm text-slate-500">Memuat…</div>;
+  const company = cos.companies.find((c) => c.id === cos.current) || cos.companies[0];
+  const isGta = company.code === 'GTA';
 
   const p = me.perms;
   const isMaster = me.user.role === 'master';
@@ -59,12 +71,18 @@ export default function App() {
   ].filter(Boolean);
 
   return (
-    <AuthCtx.Provider value={{ ...me, logout }}>
+    <AuthCtx.Provider value={{ ...me, logout, company }}>
       <div className="flex min-h-screen flex-col">
-        <header className="no-print flex items-center justify-between gap-2 bg-brand-700 px-4 py-3 text-white sm:px-6">
-          <div className="min-w-0">
+        {/* warna header berbeda per perusahaan supaya tidak salah input ke APG / GTA */}
+        <header className={`no-print flex items-center justify-between gap-2 px-4 py-3 text-white sm:px-6 ${isGta ? 'bg-teal-800' : 'bg-brand-700'}`}>
+          <div className="flex min-w-0 items-center gap-3">
             <h1 className="text-lg font-semibold leading-tight">🥚 Telur ERP</h1>
-            <p className="truncate text-xs text-brand-100">Penjualan, pembelian & piutang distribusi telur</p>
+            <label className="flex min-w-0 items-center gap-2" title="Perusahaan yang sedang dibuka - semua data & laporan hanya milik perusahaan ini">
+              <span className="sr-only">Perusahaan</span>
+              <select aria-label="Perusahaan" className="rounded-md border border-white/40 bg-white/15 px-2 py-1 text-sm font-semibold text-white [&>option]:text-slate-900" value={company.id} onChange={(e) => switchCompany(e.target.value)}>
+                {cos.companies.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.display_name}</option>)}
+              </select>
+            </label>
           </div>
           <div className="flex items-center gap-1">
             <span className="hidden px-2 text-right text-xs leading-tight text-brand-100 sm:block">

@@ -41,7 +41,7 @@ function Parties({ kind }) {
           <tbody>
             {rows.map((p) => (
               <tr key={p.id} className={perms.master ? 'cursor-pointer hover:bg-sky-50' : ''} onClick={() => perms.master && setEdit(p)}>
-                <td className="font-medium">{p.name}</td><td>{p.phone}</td><td className="text-right">{p.term_days}</td>
+                <td className="font-medium">{p.name}{p.gta_purchase ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Penjualan ke customer ini = pembelian PT GTA dari APG">GTA</span> : null}</td><td>{p.phone}</td><td className="text-right">{p.term_days}</td>
                 {kind === 'customer' && <td className="max-w-[260px] truncate">{p.price_rule}</td>}
                 <td className="max-w-[260px] truncate">{p.notes}</td><td><Active v={p.active} /></td>
               </tr>
@@ -55,6 +55,7 @@ function Parties({ kind }) {
 }
 
 function PartyForm({ p, onClose, onSaved }) {
+  const { company } = useAuth();
   const [f, setF] = useState(p);
   const [prices, setPrices] = useState([]);
   const items = useLoad(() => get('/items'), []);
@@ -79,6 +80,12 @@ function PartyForm({ p, onClose, onSaved }) {
           <Field label="Telepon"><input className="inp" value={f.phone || ''} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
           <Field label="Termin bayar (hari)"><NumInput value={f.term_days} onChange={(v) => setF({ ...f, term_days: v })} /></Field>
           <Field label="Alamat" className="col-span-2"><input className="inp" value={f.address || ''} onChange={(e) => setF({ ...f, address: e.target.value })} /></Field>
+          {isCust && company?.code === 'APG' && (
+            <label className="col-span-2 flex items-start gap-2 rounded border border-teal-200 bg-teal-50 p-2 text-sm dark:border-teal-900 dark:bg-teal-950/40">
+              <input type="checkbox" className="mt-0.5" checked={!!f.gta_purchase} onChange={(e) => setF({ ...f, gta_purchase: e.target.checked })} />
+              <span><b>Pembelian GTA</b> — penjualan APG ke customer ini diakui sebagai pembelian PT GTA dari APG / Farm (mis. Angel, Adi, Adi D, Potteria Restaurant)</span>
+            </label>
+          )}
           {isCust && <Field label="Aturan harga khusus (teks bebas, tampil saat buat invoice)" className="col-span-2"><textarea className="inp" rows={2} value={f.price_rule || ''} onChange={(e) => setF({ ...f, price_rule: e.target.value })} placeholder="mis. harga curah = harga pasar − 500, ambil ≥ 500 kg" /></Field>}
           <Field label="Catatan" className="col-span-2"><input className="inp" value={f.notes || ''} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(f.active)} onChange={(e) => setF({ ...f, active: e.target.checked ? 1 : 0 })} /> Aktif</label>

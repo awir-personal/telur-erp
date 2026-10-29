@@ -26,6 +26,14 @@ async function call(method, path, body, token) {
   return { status: res.status, body: await res.json() };
 }
 const ok = async (p) => { const r = await p; assert.ok(r.status < 300, `${r.status} ${JSON.stringify(r.body)}`); return r.body; };
+// v4.0: request atas nama perusahaan tertentu (header X-Company). Tanpa header = APG (perusahaan 1).
+async function callC(cid, method, path, body, token) {
+  const res = await fetch(base + path, {
+    method, headers: { 'content-type': 'application/json', 'x-company': String(cid), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.json() };
+}
 
 test.before(async () => {
   await dropDb();
@@ -439,6 +447,90 @@ test('v3 laporan keuangan: neraca seimbang, HPP periodik dengan nilai persediaan
   assert.ok(cf.rows.some((x) => x.label === 'Penerimaan dari customer'));
 });
 
+test('v4 multi-perusahaan: GTA punya pembukuan sendiri, data & laporan APG tidak berubah sedikit pun', async () => {
+  const G = (m, p, b, tok = S.master) => callC(2, m, p, b, tok);
+  const cos = await ok(call('GET', '/companies', null, S.fin));
+  assert.deepEqual([cos.current, cos.companies.map((c) => c.code)], [1, ['APG', 'GTA']]);
+  assert.equal((await callC(99, 'GET', '/invoices', null, S.fin)).status, 400); // perusahaan tidak dikenal
+  assert.equal((await callC('abc', 'GET', '/invoices', null, S.fin)).status, 400);
+
+  // Potret SEMUA laporan & daftar APG sebelum GTA diisi
+  const R = '?from=2000-01-01&to=2099-12-31';
+  const snapPaths = ['/reports/balance-sheet?as_of=2099-12-31', `/reports/profit-loss${R}`, '/dashboard?today=2099-03-31', '/reports/aging?kind=sale&as_of=2099-12-31',
+    '/reports/aging?kind=purchase&as_of=2099-12-31', '/invoices?kind=sale', '/invoices?kind=purchase', '/payments?kind=sale', '/payments?kind=purchase',
+    '/parties?kind=customer', '/parties?kind=supplier', '/accounts', '/cash/balances?as_of=2099-12-31', `/reports/journal${R}`, `/reports/ledger${R}`,
+    `/reports/stock${R}`, `/reports/margin${R}`, `/journals${R}`, '/cash/txns', `/reports/cashflow${R}`, '/coa', `/recon/lines?account_id=${S.bca}`];
+  const snap = async () => Object.fromEntries(await Promise.all(snapPaths.map(async (p) => [p, await ok(call('GET', p, null, S.master))])));
+  const before = await snap();
+
+  // ===== GTA: master sendiri (nama boleh sama dengan APG), nomor invoice sendiri, rekening sendiri =====
+  assert.deepEqual(await ok(G('GET', '/parties?kind=customer')), []);
+  const accsG = await ok(G('GET', '/accounts'));
+  assert.deepEqual(accsG.map((a) => a.name), ['Kas Tunai']);
+  const kasG = accsG[0].id;
+  const custApgName = before['/parties?kind=customer'].find((p) => p.id === S.cust).name;
+  const custG = (await ok(G('POST', '/parties', { kind: 'customer', name: custApgName, term_days: 90 }))).id; // nama sama dengan customer APG: boleh
+  assert.notEqual(custG, S.cust);
+  assert.equal((await G('POST', '/parties', { kind: 'customer', name: custApgName })).status, 400); // tetap unik di dalam GTA
+  const suppG = (await ok(G('POST', '/parties', { kind: 'supplier', name: 'APG / Farm', gta_purchase: true }))).id;
+  const buy = await ok(G('POST', '/invoices', { kind: 'purchase', date: '2099-05-01', party_id: suppG, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 100, price: 25000 }] }));
+  const sale = await ok(G('POST', '/invoices', { kind: 'sale', date: '2099-05-02', party_id: custG, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 90, price: 27000, cost_price: 25000 }] }));
+  assert.deepEqual([buy.number, sale.number], ['PB-1', '1']); // penghitung nomor GTA mulai sendiri
+  await ok(G('POST', '/payments', { kind: 'sale', date: '2099-05-03', party_id: custG, method: 'transfer', amount: 1000000, account_id: kasG, allocations: [{ invoice_id: sale.id, amount: 1000000 }] }));
+  await ok(G('POST', '/payments', { kind: 'purchase', date: '2099-05-03', party_id: suppG, method: 'cash', amount: 500000, account_id: kasG, allocations: [{ invoice_id: buy.id, amount: 500000 }] }));
+  await ok(G('POST', '/payments', { kind: 'sale', date: '2099-05-03', party_id: custG, method: 'cash', amount: 250000, account_id: kasG })); // uang muka, belum dialokasikan
+  const cat = (await ok(G('GET', '/cash/categories'))).find((c) => c.kind === 'biaya');
+  await ok(G('POST', '/cash/txns', { kind: 'biaya', date: '2099-05-04', account_id: kasG, category_id: cat.id, amount: 15000, note: 'ongkir GTA' }));
+  await ok(G('POST', '/journals', { date: '2099-05-05', memo: 'Setoran modal GTA', lines: [{ coa: `1101-${kasG}`, debit: 2000000 }, { coa: '3101', credit: 2000000 }] }));
+  const bankG = (await ok(G('POST', '/accounts', { name: 'BCA', type: 'bank', bank: 'BCA', opening_balance: 0, opening_date: '2099-05-01' }))).id; // nama sama dengan rekening APG: boleh
+  await ok(G('POST', '/recon/import', { account_id: bankG, rows: [['Post Date', 'Description', 'Debit', 'Credit'], ['06/05/2099', 'MUTASI GTA', '0.00', '777.00']] }));
+  await ok(G('PUT', '/settings', { company_name: 'PT Gudang Telur Anugrah (uji)' }));
+
+  // ===== APG sama persis seperti sebelum GTA diisi =====
+  const after = await snap();
+  for (const p of snapPaths) assert.deepEqual(after[p], before[p], `APG berubah di ${p}`);
+  assert.notEqual((await ok(call('GET', '/settings', null, S.fin))).company_name, 'PT Gudang Telur Anugrah (uji)');
+
+  // ===== laporan GTA hanya berisi data GTA, neraca seimbang =====
+  const bsG = await ok(G('GET', '/reports/balance-sheet?as_of=2099-12-31'));
+  assert.equal(bsG.difference, 0);
+  assert.equal(bsG.assets.find((a) => a.code === '1201').amount, 90 * 27000 - 1000000); // piutang GTA
+  assert.equal(bsG.liabilities.find((a) => a.code === '2101').amount, 100 * 25000 - 500000); // hutang GTA ke APG / Farm
+  assert.equal(bsG.assets.find((a) => a.code === `1101-${kasG}`).amount, 1000000 - 500000 - 15000 + 2000000 + 250000);
+  assert.equal(bsG.liabilities.find((a) => a.code === '2201').amount, 250000); // uang muka pelanggan GTA
+  const plG = await ok(G('GET', `/reports/profit-loss${R}`));
+  assert.deepEqual([plG.sales, plG.purchases, plG.totalExp], [2430000, 2500000, 15000]);
+  const dG = await ok(G('GET', '/dashboard?today=2099-05-02'));
+  assert.deepEqual([dG.salesToday.total, dG.cash.map((c) => c.name)], [2430000, ['Kas Tunai', 'BCA']]);
+  assert.equal(dG.todo.unallocatedSale, 250000);
+  assert.deepEqual((await ok(G('GET', '/invoices?kind=sale'))).map((i) => i.number), ['1']);
+  assert.equal((await ok(G('GET', '/settings'))).company_name, 'PT Gudang Telur Anugrah (uji)');
+  assert.equal((await ok(G('GET', '/companies'))).companies.find((c) => c.code === 'GTA').display_name, 'PT Gudang Telur Anugrah (uji)');
+  assert.deepEqual((await ok(G('GET', '/parties?kind=supplier'))).map((p) => [p.name, p.gta_purchase]), [['APG / Farm', 0]]); // tanda GTA hanya untuk customer
+
+  // ===== tidak bisa menyentuh data perusahaan lain lewat id =====
+  const jApg = before[`/journals${R}`][0];
+  const lineApg = before[`/recon/lines?account_id=${S.bca}`][0];
+  const cross = [
+    ['GET', `/invoices/${S.invA}`], ['PUT', `/invoices/${S.invA}/dup-note`, { dup_note: 'x' }], ['DELETE', `/invoices/${S.invA}`],
+    ['POST', '/payments', { kind: 'sale', date: '2099-05-03', party_id: S.cust, method: 'cash', amount: 1 }],
+    ['POST', '/payments', { kind: 'sale', date: '2099-05-03', party_id: custG, method: 'cash', amount: 1, account_id: S.bca }],
+    ['POST', '/payments', { kind: 'sale', date: '2099-05-03', party_id: custG, method: 'cash', amount: 1, allocations: [{ invoice_id: S.invA, amount: 1 }] }],
+    ['POST', '/invoices', { kind: 'sale', date: '2099-05-02', party_id: S.cust, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 1, price: 1 }] }],
+    ['GET', `/cash/ledger?account_id=${S.bca}`], ['PUT', `/accounts/${S.bca}`, { name: 'x', type: 'bank' }],
+    ['POST', '/cash/txns', { kind: 'biaya', date: '2099-05-04', account_id: S.bca, category_id: cat.id, amount: 1 }],
+    ['GET', `/recon/lines?account_id=${S.bca}`], ['POST', `/recon/lines/${lineApg.id}/unmatch`], ['POST', `/recon/lines/${lineApg.id}/ignore`, { note: 'x' }],
+    ['GET', `/parties/${S.cust}/prices`], ['PUT', `/parties/${S.cust}`, { name: 'Diubah GTA' }], ['DELETE', `/journals/${jApg.id}`],
+  ];
+  for (const [m, p, b] of cross) assert.ok([400, 404].includes((await G(m, p, b)).status), `${m} ${p} harusnya ditolak dari GTA`);
+  const again = await snap();
+  for (const p of snapPaths) assert.deepEqual(again[p], before[p], `APG berubah (akses silang) di ${p}`);
+
+  // log mencatat perusahaannya
+  const [[lg]] = await pool.query("SELECT company_id FROM activity_log WHERE action = 'create' AND entity = 'invoice_sale' ORDER BY id DESC LIMIT 1");
+  assert.equal(lg.company_id, 2);
+});
+
 test('v3 backup → restore ke database kosong menghasilkan laporan yang sama', async () => {
   assert.equal((await call('GET', '/backup', null, S.fin)).status, 403);
   const res = await fetch(base + '/backup', { headers: { authorization: `Bearer ${S.master}` } });
@@ -455,9 +547,13 @@ test('v3 backup → restore ke database kosong menghasilkan laporan yang sama', 
     assert.ok(r.counts.invoices > 20);
     await assert.rejects(restore(rpool, file), /tidak kosong/); // tidak pernah menimpa database berisi
     const J = require('../server/journal');
-    const a = await J.balanceSheet(pool, '2099-12-31');
-    const b = await J.balanceSheet(rpool, '2099-12-31');
-    assert.deepEqual([b.totalAssets, b.totalLE, b.difference], [a.totalAssets, a.totalLE, a.difference]);
+    for (const cid of [1, 2]) { // tiap perusahaan (v4.0) sama persis setelah restore
+      const a = await J.balanceSheet(pool, cid, '2099-12-31');
+      const b = await J.balanceSheet(rpool, cid, '2099-12-31');
+      assert.deepEqual([b.totalAssets, b.totalLE, b.difference], [a.totalAssets, a.totalLE, a.difference], `perusahaan ${cid}`);
+    }
+    const [cs] = await rpool.query('SELECT id, code FROM companies ORDER BY id');
+    assert.deepEqual(cs.map((c) => c.code), ['APG', 'GTA']);
     const d = await ok(call('GET', '/dashboard?today=2099-03-31', null, S.master));
     assert.ok(d.lastBackupAt);
   } finally {

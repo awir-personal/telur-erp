@@ -3,6 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const { authenticate } = require('./auth');
 const { publicRoutes, privateRoutes } = require('./routes/auth');
+const { companyScope, companyRoutes } = require('./company');
 
 function createApp(pool, opts = {}) {
   const app = express();
@@ -13,6 +14,8 @@ function createApp(pool, opts = {}) {
   app.get('/healthz', (req, res) => res.json({ ok: true }));
   app.use('/api', publicRoutes(pool, { setupCode: opts.setupCode, loginDelayMs: opts.loginDelayMs ?? 400 }));
   app.use('/api', authenticate(pool));
+  app.use('/api', companyScope(pool)); // v4.0: req.cid = perusahaan aktif (header X-Company, bawaan APG)
+  app.use('/api', companyRoutes(pool));
   app.use('/api', privateRoutes(pool));
   app.use('/api', require('./routes/master')(pool));
   app.use('/api', require('./routes/invoices')(pool));

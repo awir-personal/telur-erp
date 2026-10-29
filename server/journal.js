@@ -21,8 +21,9 @@ const FIXED = [
 ];
 
 // Bagan akun: tetap + rekening kas/bank (1101-<id>) + kategori biaya (6-<id>) / pemasukan lain (42-<id>).
-async function chartOfAccounts(db) {
-  const [accs] = await db.query('SELECT id, name FROM accounts ORDER BY sort_order, id');
+// v4.0: semua fungsi di file ini per perusahaan (cid).
+async function chartOfAccounts(db, cid) {
+  const [accs] = await db.query('SELECT id, name FROM accounts WHERE company_id = ? ORDER BY sort_order, id', [cid]);
   const [cats] = await db.query('SELECT id, kind, name FROM cash_categories ORDER BY id');
   const coa = [
     ...accs.map((a) => [`1101-${a.id}`, `Kas & Bank: ${a.name}`, 'aset']),
@@ -43,20 +44,20 @@ const cashCoaFor = (opening) => (accountId, date) => {
 const L = (coa, debit, credit) => ({ coa, debit: round2(debit || 0), credit: round2(credit || 0) });
 
 // Semua jurnal sampai tanggal `to`.
-async function buildEntries(db, to = '9999-12-31') {
-  const [accRows] = await db.query('SELECT id, opening_date FROM accounts');
+async function buildEntries(db, cid, to = '9999-12-31') {
+  const [accRows] = await db.query('SELECT id, opening_date FROM accounts WHERE company_id = ?', [cid]);
   const cashCoa = cashCoaFor(new Map(accRows.filter((a) => a.opening_date).map((a) => [a.id, a.opening_date])));
   const E = [];
   const add = (date, src, ref, memo, lines) => {
     const ls = lines.filter((l) => l.debit || l.credit);
     if (ls.length) E.push({ date, src, ref, memo, lines: ls });
   };
-  const invs = await loadInvoices(db, 'i.date <= ?', [to]);
+  const invs = await loadInvoices(db, cid, 'i.date <= ?', [to]);
   for (const i of invs) {
     if (i.kind === 'sale') add(i.date, 'invoice', i.id, `Penjualan ${i.number} · ${i.party_name}`, [L('1201', i.total), L('4101', 0, i.total)]);
     else add(i.date, 'invoice', i.id, `Pembelian ${i.number} · ${i.party_name}`, [L('5101', i.total), L('2101', 0, i.total)]);
   }
-  const [adjs] = await db.query(`SELECT a.*, i.kind, i.number FROM adjustments a JOIN invoices i ON i.id = a.invoice_id WHERE a.date <= ?`, [to]);
+  const [adjs] = await db.query(`SELECT a.*, i.kind, i.number FROM adjustments a JOIN invoices i ON i.id = a.invoice_id WHERE i.company_id = ? AND a.date <= ?`, [cid, to]);
   for (const a of adjs) {
     const amt = Number(a.amount);
     const memo = `Penyesuaian ${a.type} ${a.number}: ${a.note}`;
@@ -64,7 +65,7 @@ async function buildEntries(db, to = '9999-12-31') {
     else add(a.date, 'adjustment', a.id, memo, amt > 0 ? [L('2101', amt), L('5102', 0, amt)] : [L('5102', -amt), L('2101', 0, -amt)]);
   }
   const [pays] = await db.query(`SELECT p.*, pt.name AS party_name, COALESCE((SELECT SUM(x.amount) FROM allocations x WHERE x.payment_id = p.id), 0) AS allocated
-    FROM payments p JOIN parties pt ON pt.id = p.party_id WHERE p.date <= ?`, [to]);
+    FROM payments p JOIN parties pt ON pt.id = p.party_id WHERE p.company_id = ? AND p.date <= ?`, [cid, to]);
   for (const p of pays) {
     const alloc = round2(p.allocated);
     const rest = round2(p.amount - alloc);
@@ -72,7 +73,7 @@ async function buildEntries(db, to = '9999-12-31') {
     if (p.kind === 'sale') add(p.date, 'payment', p.id, `Terima dari ${p.party_name}`, [L(cash, p.amount), L('1201', 0, alloc), L('2201', 0, rest)]);
     else add(p.date, 'payment', p.id, `Bayar ke ${p.party_name}`, [L('2101', alloc), L('1401', rest), L(cash, 0, p.amount)]);
   }
-  const [txns] = await db.query(`SELECT c.*, cc.name AS cat FROM cash_txns c LEFT JOIN cash_categories cc ON cc.id = c.category_id WHERE c.date <= ?`, [to]);
+  const [txns] = await db.query(`SELECT c.*, cc.name AS cat FROM cash_txns c LEFT JOIN cash_categories cc ON cc.id = c.category_id WHERE c.company_id = ? AND c.date <= ?`, [cid, to]);
   for (const t of txns) {
     const acc = cashCoa(t.account_id, t.date);
     const memo = [t.cat || 'Transfer', t.note].filter(Boolean).join(' · ');
@@ -85,7 +86,7 @@ async function buildEntries(db, to = '9999-12-31') {
     };
     add(t.date, 'cash', t.id, memo, m[t.kind]);
   }
-  const [accs] = await db.query('SELECT * FROM accounts');
+  const [accs] = await db.query('SELECT * FROM accounts WHERE company_id = ?', [cid]);
   for (const a of accs) {
     const ob = Number(a.opening_balance);
     if (!ob) continue;
@@ -93,7 +94,7 @@ async function buildEntries(db, to = '9999-12-31') {
     if (date > to) continue;
     add(date, 'opening', a.id, `Saldo awal ${a.name}`, ob > 0 ? [L(`1101-${a.id}`, ob), L('3301', 0, ob)] : [L('3301', -ob), L(`1101-${a.id}`, 0, -ob)]);
   }
-  const [je] = await db.query('SELECT * FROM journal_entries WHERE date <= ?', [to]);
+  const [je] = await db.query('SELECT * FROM journal_entries WHERE company_id = ? AND date <= ?', [cid, to]);
   if (je.length) {
     const [jl] = await db.query('SELECT * FROM journal_lines WHERE entry_id IN (?) ORDER BY id', [je.map((e) => e.id)]);
     for (const e of je) add(e.date, 'manual', e.id, e.memo, jl.filter((l) => l.entry_id === e.id).map((l) => ({ ...L(l.coa, l.debit, l.credit), note: l.note })));
@@ -103,10 +104,10 @@ async function buildEntries(db, to = '9999-12-31') {
 }
 
 // Nilai persediaan per tanggal (estimasi periodik).
-async function inventoryValue(db, date) {
+async function inventoryValue(db, cid, date) {
   const [rows] = await db.query(`SELECT i.kind, i.date, l.item_id, it.name AS item, u.name AS unit, u.kg_per_unit, l.qty, l.price
     FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id JOIN items it ON it.id = l.item_id JOIN units u ON u.id = l.unit_id
-    WHERE i.date <= ?`, [date]);
+    WHERE i.company_id = ? AND i.date <= ?`, [cid, date]);
   const m = new Map();
   for (const r of rows) {
     const unit = r.kg_per_unit ? 'kg' : r.unit;
@@ -143,16 +144,16 @@ function balances(entries, from, to) {
 }
 const net = (b, code, side = 'debit') => { const x = b.get(code); if (!x) return 0; return round2(side === 'debit' ? x.debit - x.credit : x.credit - x.debit); };
 
-async function profitLoss(db, from, to) {
-  const coa = await chartOfAccounts(db);
-  const entries = await buildEntries(db, to);
+async function profitLoss(db, cid, from, to) {
+  const coa = await chartOfAccounts(db, cid);
+  const entries = await buildEntries(db, cid, to);
   const b = balances(entries, from, to);
   const sales = net(b, '4101', 'credit');
   const salesAdj = net(b, '4102', 'debit');
   const purchases = net(b, '5101', 'debit');
   const purchAdj = net(b, '5102', 'credit');
-  const invStart = (await inventoryValue(db, addDays(from, -1))).value;
-  const invEndFull = await inventoryValue(db, to);
+  const invStart = (await inventoryValue(db, cid, addDays(from, -1))).value;
+  const invEndFull = await inventoryValue(db, cid, to);
   const invEnd = invEndFull.value;
   const hpp = round2(purchases - purchAdj + invStart - invEnd);
   const otherIncome = [...coa.values()].filter((c) => c.code.startsWith('42-')).map((c) => ({ code: c.code, name: c.name, amount: net(b, c.code, 'credit') })).filter((x) => x.amount);
@@ -164,7 +165,7 @@ async function profitLoss(db, from, to) {
   // Kontrol: HPP dari harga beli yang diketik di invoice penjualan.
   const [ctl] = await db.query(`SELECT COALESCE(SUM(CASE WHEN l.cost_price IS NOT NULL THEN l.qty * l.cost_price END), 0) AS typed,
       SUM(l.cost_price IS NULL) AS missing, COUNT(*) AS n
-    FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id WHERE i.kind = 'sale' AND i.date BETWEEN ? AND ?`, [from, to]);
+    FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id WHERE i.company_id = ? AND i.kind = 'sale' AND i.date BETWEEN ? AND ?`, [cid, from, to]);
   const typed = round2(ctl[0].typed);
   return {
     from, to, sales, salesAdj, netSales, purchases, purchAdj, invStart, invEnd, inventory: invEndFull.items, hpp, gross,
@@ -173,11 +174,11 @@ async function profitLoss(db, from, to) {
   };
 }
 
-async function balanceSheet(db, asOf) {
-  const coa = await chartOfAccounts(db);
-  const entries = await buildEntries(db, asOf);
+async function balanceSheet(db, cid, asOf) {
+  const coa = await chartOfAccounts(db, cid);
+  const entries = await buildEntries(db, cid, asOf);
   const b = balances(entries, '0000-00-00', asOf);
-  const inv = await inventoryValue(db, asOf);
+  const inv = await inventoryValue(db, cid, asOf);
   const line = (code, side) => ({ code, name: coa.get(code)?.name || code, amount: net(b, code, side) });
   const assets = [...[...coa.keys()].filter((c) => c.startsWith('1101-')).map((c) => line(c, 'debit')), line('1102', 'debit'), line('1201', 'debit'),
     { code: '1301', name: 'Persediaan Telur (estimasi)', amount: inv.value }, line('1401', 'debit')].filter((x) => x.amount || x.code === '1301');

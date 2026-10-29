@@ -12,8 +12,8 @@ module.exports = function dashboardRoutes(pool) {
   r.get('/dashboard', async (req, res) => {
     const today = req.query.today || todayWIB();
     const month = today.slice(0, 8) + '01';
-    const sales = await loadInvoices(pool, 'i.kind = "sale"');
-    const buys = await loadInvoices(pool, 'i.kind = "purchase"');
+    const sales = await loadInvoices(pool, req.cid, 'i.kind = "sale"');
+    const buys = await loadInvoices(pool, req.cid, 'i.kind = "purchase"');
 
     const inMonth = sales.filter((i) => i.date >= month && i.date <= today);
     const costed = inMonth.flatMap((i) => i.lines).filter((l) => l.cost_price != null);
@@ -32,9 +32,9 @@ module.exports = function dashboardRoutes(pool) {
     }
 
     const [unalloc] = await pool.query(`SELECT p.kind, SUM(p.amount - COALESCE((SELECT SUM(a.amount) FROM allocations a WHERE a.payment_id = p.id), 0)) AS amt
-      FROM payments p GROUP BY p.kind`);
-    const [accs] = await pool.query('SELECT * FROM accounts WHERE active = 1 ORDER BY sort_order, id');
-    const moves = await movements(pool, { to: today });
+      FROM payments p WHERE p.company_id = ? GROUP BY p.kind`, [req.cid]);
+    const [accs] = await pool.query('SELECT * FROM accounts WHERE active = 1 AND company_id = ? ORDER BY sort_order, id', [req.cid]);
+    const moves = await movements(pool, req.cid, { to: today });
     const [[setting]] = await pool.query("SELECT v FROM settings WHERE k = 'last_backup_at'");
 
     res.json({

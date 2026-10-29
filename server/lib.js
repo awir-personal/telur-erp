@@ -5,10 +5,14 @@ class HttpError extends Error {
 }
 const bad = (msg) => new HttpError(400, msg);
 
+// user.company_id diisi middleware companyScope (perusahaan yang sedang dipilih) - log ikut mencatat perusahaannya.
 async function log(db, user, action, entity, entityId, detail) {
-  await db.query('INSERT INTO activity_log (user_id, user_name, action, entity, entity_id, detail) VALUES (?,?,?,?,?,?)',
-    [user?.id ?? null, user?.name ?? null, action, entity, entityId ?? null, detail == null ? null : JSON.stringify(detail)]);
+  await db.query('INSERT INTO activity_log (user_id, user_name, action, entity, entity_id, detail, company_id) VALUES (?,?,?,?,?,?,?)',
+    [user?.id ?? null, user?.name ?? null, action, entity, entityId ?? null, detail == null ? null : JSON.stringify(detail), user?.company_id ?? null]);
 }
+
+// v4.0 Pengaturan per perusahaan: perusahaan 1 (APG) memakai kunci lama apa adanya, perusahaan lain berawalan "c<id>.".
+const skey = (cid, k) => (Number(cid) === 1 ? k : `c${cid}.${k}`);
 
 // Jalankan fn dalam satu transaksi; rollback kalau gagal.
 async function tx(pool, fn) {
@@ -47,10 +51,12 @@ const reqStr = (v, label, max = 255) => {
 };
 
 // Ringkasan (total, dibayar, sisa, status, margin) untuk sekumpulan invoice.
-async function loadInvoices(db, where = '1=1', params = [], order = 'i.date DESC, i.id DESC') {
+// cid WAJIB (v4.0): invoice selalu dibaca per perusahaan.
+async function loadInvoices(db, cid, where = '1=1', params = [], order = 'i.date DESC, i.id DESC') {
+  if (!Number(cid)) throw new Error('loadInvoices: company id wajib');
   const [invs] = await db.query(
-    `SELECT i.*, p.name AS party_name FROM invoices i JOIN parties p ON p.id = i.party_id
-     WHERE ${where} ORDER BY ${order}`, params);
+    `SELECT i.*, p.name AS party_name, p.gta_purchase FROM invoices i JOIN parties p ON p.id = i.party_id
+     WHERE i.company_id = ? AND (${where}) ORDER BY ${order}`, [cid, ...params]);
   if (!invs.length) return [];
   const ids = invs.map((i) => i.id);
   const [lines] = await db.query(
@@ -62,7 +68,7 @@ async function loadInvoices(db, where = '1=1', params = [], order = 'i.date DESC
      FROM allocations a JOIN payments p ON p.id = a.payment_id WHERE a.invoice_id IN (?) GROUP BY a.invoice_id`, [ids]);
   const [adj] = await db.query('SELECT invoice_id, SUM(amount) AS adjusted FROM adjustments WHERE invoice_id IN (?) GROUP BY invoice_id', [ids]);
   // v3.3: No Inv yang dipakai >1 invoice (hasil import apa adanya) -> wajib diberi catatan oleh user
-  const [dups] = await db.query('SELECT kind, number, COUNT(*) AS n FROM invoices GROUP BY kind, number HAVING n > 1');
+  const [dups] = await db.query('SELECT kind, number, COUNT(*) AS n FROM invoices WHERE company_id = ? GROUP BY kind, number HAVING n > 1', [cid]);
   const dupM = new Map(dups.map((d) => [`${d.kind}|${d.number}`, d.n]));
   const byInv = (rows) => new Map(rows.map((r) => [r.invoice_id, r]));
   const paidM = byInv(paid), adjM = byInv(adj);
@@ -76,4 +82,4 @@ async function loadInvoices(db, where = '1=1', params = [], order = 'i.date DESC
   });
 }
 
-module.exports = { HttpError, bad, log, tx, reqDate, reqNum, optStr, reqStr, loadInvoices };
+module.exports = { HttpError, bad, log, skey, tx, reqDate, reqNum, optStr, reqStr, loadInvoices };

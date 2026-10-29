@@ -13,9 +13,9 @@ module.exports = function reportRoutes(pool) {
   r.get('/reports/aging', async (req, res) => {
     const kind = kindOf(req.query.kind);
     const asOf = req.query.as_of || todayWIB();
-    const invs = (await loadInvoices(pool, 'i.kind = ? AND i.date <= ?', [kind, asOf])).filter((i) => Math.abs(i.outstanding) >= EPS);
+    const invs = (await loadInvoices(pool, req.cid, 'i.kind = ? AND i.date <= ?', [kind, asOf])).filter((i) => Math.abs(i.outstanding) >= EPS);
     const [credits] = await pool.query(`SELECT p.party_id, SUM(p.amount - COALESCE((SELECT SUM(a.amount) FROM allocations a WHERE a.payment_id = p.id),0)) AS unallocated
-      FROM payments p WHERE p.kind = ? AND p.date <= ? GROUP BY p.party_id`, [kind, asOf]);
+      FROM payments p WHERE p.company_id = ? AND p.kind = ? AND p.date <= ? GROUP BY p.party_id`, [req.cid, kind, asOf]);
     const parties = new Map();
     const row = (id, name) => {
       if (!parties.has(id)) parties.set(id, { party_id: id, party_name: name, ...Object.fromEntries(AGING_BUCKETS.map((b) => [b, 0])), total: 0, unallocated: 0, invoices: [] });
@@ -42,7 +42,7 @@ module.exports = function reportRoutes(pool) {
   r.get('/reports/margin', async (req, res) => {
     const from = req.query.from || addDays(todayWIB(), -30);
     const to = req.query.to || todayWIB();
-    const invs = await loadInvoices(pool, 'i.kind = "sale" AND i.date BETWEEN ? AND ?', [from, to]);
+    const invs = await loadInvoices(pool, req.cid, 'i.kind = "sale" AND i.date BETWEEN ? AND ?', [from, to]);
     const rows = invs.map((i) => {
       const costed = i.lines.filter((l) => l.cost_price != null);
       const salesCosted = round2(costed.reduce((s, l) => s + lineTotal(l), 0));
@@ -68,7 +68,7 @@ module.exports = function reportRoutes(pool) {
     const to = req.query.to || todayWIB();
     const [rows] = await pool.query(`SELECT i.kind, i.date, it.name AS item, it.sort_order, u.name AS unit, u.kg_per_unit, l.qty
       FROM invoice_lines l JOIN invoices i ON i.id = l.invoice_id JOIN items it ON it.id = l.item_id JOIN units u ON u.id = l.unit_id
-      WHERE i.date <= ? ORDER BY i.date`, [to]);
+      WHERE i.company_id = ? AND i.date <= ? ORDER BY i.date`, [req.cid, to]);
     const items = new Map();
     for (const x of rows) {
       const unit = x.kg_per_unit ? 'kg' : x.unit;
@@ -96,11 +96,11 @@ module.exports = function reportRoutes(pool) {
   // Import ulang tidak boleh dobel (v3.3: 1 baris = 1 invoice, nomor boleh sama). Invoice yang sudah ada per
   // nomor: import_seq NULL = diketik manual / hasil import lama yang MENGGABUNG baris -> semua baris nomor itu
   // dilewati (sudah tercakup); selain itu dilewati per urutan kemunculan (seq).
-  async function existingImports(db, invoices) {
+  async function existingImports(db, cid, invoices) {
     const nums = [...new Set(invoices.map((i) => i.number))];
     const m = new Map();
     if (!nums.length) return m;
-    const [rows] = await db.query('SELECT number, import_seq FROM invoices WHERE kind = "sale" AND number IN (?)', [nums]);
+    const [rows] = await db.query('SELECT number, import_seq FROM invoices WHERE company_id = ? AND kind = "sale" AND number IN (?)', [cid, nums]);
     for (const r of rows) {
       if (!m.has(r.number)) m.set(r.number, { legacy: false, seqs: new Set() });
       if (r.import_seq == null) m.get(r.number).legacy = true;
@@ -117,7 +117,7 @@ module.exports = function reportRoutes(pool) {
   r.post('/import/preview', requirePerm('import'), async (req, res) => {
     const plan = parseSheet(req.body.rows || [], { numberFormat: req.body.numberFormat });
     if (plan.error) throw bad(plan.error);
-    const ex = await existingImports(pool, plan.invoices);
+    const ex = await existingImports(pool, req.cid, plan.invoices);
     for (const inv of plan.invoices) inv.exists = !!skipReason(ex, inv);
     res.json(plan);
   });
@@ -151,13 +151,13 @@ module.exports = function reportRoutes(pool) {
       async function party(name) {
         const k = name.toLowerCase();
         if (cache.party.has(k)) return cache.party.get(k);
-        let [[p]] = await c.query('SELECT id, term_days FROM parties WHERE kind = "customer" AND name = ?', [name]);
-        if (!p) { const [ins] = await c.query('INSERT INTO parties (kind, name) VALUES ("customer", ?)', [name]); p = { id: ins.insertId, term_days: 30 }; created.customers.push(name); }
+        let [[p]] = await c.query('SELECT id, term_days FROM parties WHERE company_id = ? AND kind = "customer" AND name = ?', [req.cid, name]);
+        if (!p) { const [ins] = await c.query('INSERT INTO parties (company_id, kind, name) VALUES (?, "customer", ?)', [req.cid, name]); p = { id: ins.insertId, term_days: 30 }; created.customers.push(name); }
         cache.party.set(k, p);
         return p;
       }
       const imported = [], skipped = [];
-      const ex = await existingImports(c, plan.invoices);
+      const ex = await existingImports(c, req.cid, plan.invoices);
       const done = []; // { inv, id, partyId, room }
       for (const inv of plan.invoices) {
         const label = inv.dupCount > 1 ? `${inv.number} (baris ${inv.rows[0]})` : inv.number;
@@ -166,14 +166,14 @@ module.exports = function reportRoutes(pool) {
         if (!inv.lines.length) { skipped.push(`${label}: tidak ada baris barang`); continue; }
         const p = await party(inv.partyName);
         const [ins] = await c.query('INSERT INTO invoices SET ?', [{
-          kind: 'sale', number: inv.number, import_seq: inv.seq, date: inv.date, party_id: p.id, due_date: addDays(inv.date, p.term_days),
+          company_id: req.cid, kind: 'sale', number: inv.number, import_seq: inv.seq, date: inv.date, party_id: p.id, due_date: addDays(inv.date, p.term_days),
           po_ref: inv.poRef, notes: inv.notes, imported_total: inv.importedTotal, created_by: req.user.id, updated_by: req.user.id,
         }]);
         const lineRows = [];
         for (const [i, l] of inv.lines.entries()) lineRows.push([ins.insertId, await itemId(l.itemName, l.unitName), await unitId(l.unitName), l.qty, l.price, null, null, i]);
         await c.query('INSERT INTO invoice_lines (invoice_id, item_id, unit_id, qty, price, cost_price, note, sort) VALUES ?', [lineRows]);
         done.push({ inv, id: ins.insertId, partyId: p.id, room: inv.computedTotal });
-        await bumpCounter(c, 'sale', inv.number);
+        await bumpCounter(c, req.cid, 'sale', inv.number);
         imported.push(label);
       }
       // Pembayaran (kolom Nominal) baris itu: dialokasikan ke invoice barisnya dulu, sisanya ke invoice lain
@@ -182,7 +182,7 @@ module.exports = function reportRoutes(pool) {
       for (const d of done) {
         const targets = [d, ...done.filter((o) => o !== d && o.inv.number === d.inv.number && o.partyId === d.partyId)];
         for (const pay of d.inv.payments) {
-          const [pi] = await c.query('INSERT INTO payments SET ?', [{ kind: 'sale', date: pay.date, party_id: d.partyId, method: pay.method, amount: pay.amount, notes: pay.note, created_by: req.user.id }]);
+          const [pi] = await c.query('INSERT INTO payments SET ?', [{ company_id: req.cid, kind: 'sale', date: pay.date, party_id: d.partyId, method: pay.method, amount: pay.amount, notes: pay.note, created_by: req.user.id }]);
           let left = pay.amount;
           for (const t of targets) {
             const alloc = round2(Math.min(left, Math.max(t.room, 0)));

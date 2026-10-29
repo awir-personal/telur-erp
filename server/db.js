@@ -268,14 +268,40 @@ const MIGRATIONS = [
     addColumn('invoices', 'import_seq', 'SMALLINT NULL'), // urutan kemunculan No Inv di sheet (1, 2, ...); NULL = manual / import lama (digabung)
     addColumn('invoices', 'dup_note', 'TEXT NULL'), // catatan user untuk No Inv dobel
   ]],
+  // v4.0 — multi-perusahaan (keputusan user 2026-10-29): APG = perusahaan 1 (SEMUA data lama), GTA = perusahaan 2 dengan
+  // pembukuan lengkap sendiri. Data transaksi & master customer/supplier & rekening per perusahaan; barang, satuan,
+  // kategori kas & user dipakai bersama. Pengaturan per perusahaan: kunci settings berawalan "c<id>." (lib.skey).
+  ['005_multi_perusahaan', [
+    `CREATE TABLE IF NOT EXISTS companies (
+      id INT PRIMARY KEY,
+      code VARCHAR(10) NOT NULL UNIQUE,
+      name VARCHAR(120) NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0
+    )`,
+    `INSERT IGNORE INTO companies (id, code, name, sort_order) VALUES (1, 'APG', 'APG / Farm', 1), (2, 'GTA', 'PT Gudang Telur Anugrah', 2)`,
+    ...['parties', 'invoices', 'payments', 'accounts', 'cash_txns', 'journal_entries'].map((t) => addColumn(t, 'company_id', 'INT NOT NULL DEFAULT 1')),
+    addColumn('activity_log', 'company_id', 'INT NULL'),
+    // customer APG yang penjualannya = PEMBELIAN PT GTA dari APG (tag di sheet Global)
+    addColumn('parties', 'gta_purchase', 'TINYINT NOT NULL DEFAULT 0'),
+    // nama customer/supplier & rekening unik PER perusahaan (indeks baru dibuat dulu, baru yang lama dilepas)
+    addIndex('parties', 'uq_party_co', '(company_id, kind, name)', true),
+    dropIndex('parties', 'uq_party'),
+    addIndex('accounts', 'uq_account_co', '(company_id, name)', true),
+    dropIndex('accounts', 'name'),
+    addIndex('invoices', 'ix_inv_co_number', '(company_id, kind, number)'),
+    addIndex('invoices', 'ix_inv_co_date', '(company_id, kind, date)'),
+    addIndex('payments', 'ix_pay_co_date', '(company_id, kind, date)'),
+    `UPDATE parties SET gta_purchase = 1 WHERE company_id = 1 AND kind = 'customer' AND name IN ('Angel', 'Adi', 'Adi D', 'Potteria Restaurant')`,
+    `INSERT IGNORE INTO accounts (company_id, name, type, sort_order) VALUES (2, 'Kas Tunai', 'kas', 0)`,
+  ]],
 ];
 
 function indexExists(conn, table, name) {
   return conn.query('SELECT COUNT(*) AS n FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?', [table, name])
     .then(([[{ n }]]) => n > 0);
 }
-function addIndex(table, name, cols) {
-  return async (conn) => { if (!await indexExists(conn, table, name)) await conn.query(`ALTER TABLE \`${table}\` ADD INDEX \`${name}\` ${cols}`); };
+function addIndex(table, name, cols, unique = false) {
+  return async (conn) => { if (!await indexExists(conn, table, name)) await conn.query(`ALTER TABLE \`${table}\` ADD ${unique ? 'UNIQUE ' : ''}INDEX \`${name}\` ${cols}`); };
 }
 function dropIndex(table, name) {
   return async (conn) => { if (await indexExists(conn, table, name)) await conn.query(`ALTER TABLE \`${table}\` DROP INDEX \`${name}\``); };

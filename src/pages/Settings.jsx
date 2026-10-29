@@ -21,16 +21,18 @@ export default function SettingsPage() {
 }
 
 function General() {
+  const { company } = useAuth();
   const s = useLoad(() => get('/settings'), []);
   const [f, setF] = useState(null);
   const [saved, setSaved] = useState(false);
   const a = useAction();
-  useEffect(() => { if (s.data) setF({ company_name: s.data.company_name, company_address: s.data.company_address || '', company_phone: s.data.company_phone || '', next_sale_no: Number(s.data.next_sale_no) }); }, [s.data]);
+  useEffect(() => { if (s.data) setF({ company_name: s.data.company_name, company_address: s.data.company_address || '', company_phone: s.data.company_phone || '', next_sale_no: Number(s.data.next_sale_no) || 1 }); }, [s.data]);
   if (!f) return <div className="card"><ErrorBox error={s.error} /></div>;
   const save = (e) => { e.preventDefault(); setSaved(false); a.run(async () => { await put('/settings', f); setSaved(true); s.reload(); }); };
   return (
     <form className="card space-y-3" onSubmit={save}>
-      <h3 className="font-semibold">Umum</h3>
+      <h3 className="font-semibold">Umum — {company.code}</h3>
+      <p className="text-xs text-slate-500">Berlaku untuk perusahaan yang sedang dibuka ({company.code}); perusahaan lain diatur setelah berpindah lewat pilihan di header.</p>
       <Field label="Nama perusahaan"><input className="inp" value={f.company_name} onChange={(e) => setF({ ...f, company_name: e.target.value })} /></Field>
       <Field label="Alamat (tampil di invoice cetak)"><textarea className="inp" rows={2} value={f.company_address} onChange={(e) => setF({ ...f, company_address: e.target.value })} /></Field>
       <Field label="Telepon / WA"><input className="inp" value={f.company_phone} onChange={(e) => setF({ ...f, company_phone: e.target.value })} /></Field>
@@ -60,7 +62,7 @@ function Backup() {
   return (
     <div className="card space-y-2 md:col-span-2">
       <h3 className="font-semibold">Backup database</h3>
-      <p className="text-sm text-slate-600">Unduh semua data (transaksi, master, user, log) ke satu file. Simpan di tempat aman (Google Drive, flashdisk). Disarankan minimal seminggu sekali; Dashboard akan mengingatkan.</p>
+      <p className="text-sm text-slate-600">Unduh semua data SEMUA perusahaan (APG & GTA: transaksi, master, user, log) ke satu file. Simpan di tempat aman (Google Drive, flashdisk). Disarankan minimal seminggu sekali; Dashboard akan mengingatkan.</p>
       <p className="text-xs text-slate-500">Memulihkan: di server/PC baru jalankan <code>npm run restore -- "nama-file.json.gz"</code> ke database yang masih kosong. Restore sengaja menolak database yang sudah berisi data, supaya data asli tidak pernah tertimpa.</p>
       <ErrorBox error={a.error} />
       {done && <p className="text-sm text-green-700">Tersimpan: {done}</p>}
