@@ -35,3 +35,4 @@ Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/t
 - Di PC user, `npm` di PowerShell diblokir. Suruh pakai `Jalankan Telur ERP.bat` atau `npm.cmd`.
 - Heredoc Bash merusak backslash; pakai tool Edit/Write untuk kode yang penuh escape.
 - Nilai angka dari mysql2 sudah berupa number (`decimalNumbers: true`). `{x && <JSX/>}` dengan x = 0 akan merender "0" di layar.
+- Import sheet dibaca mulai kolom "Tanggal" (sheet user punya kolom centang A-B sejak Okt 2026). Sarankan upload .xlsx, bukan .csv: CSV Google Sheet membulatkan angka tampilan sehingga muncul selisih total palsu.

@@ -72,19 +72,20 @@ master = semua. admin = invoice, master, import, note, view. finance = payment, 
 
 ## 5. Import (server/importer.js)
 
-Header dicari dari baris berisi "Tanggal" + "...Inv"; baris di atasnya = nama barang (sel gabungan diteruskan ke kanan). Pasangan (qty, "Harga") antara Nama dan Total. Angka format Indonesia (titik = ribuan) atau Inggris. Tanggal: `1-Jan-26`, D/M/Y, ISO, serial Excel. Baris dengan No Inv sama → digabung. Status yang diawali "PO" → `po_ref`, lainnya → notes. Tgl Byr + Nominal → payment, dialokasikan maksimal sebesar total invoice. Nomor yang sudah ada dilewati (idempoten). Customer/barang/satuan yang belum ada dibuat otomatis.
+Header dicari dari baris berisi "Tanggal" + "...Inv"; baris di atasnya = nama barang (sel gabungan diteruskan ke kanan). **Sheet dibaca mulai kolom "Tanggal"** (v3.2): kolom di kirinya diabaikan - sejak Okt 2026 sheet user punya kolom centang A-B "Sisca Done" / "Yusuf Done" (judul grup "Please Mark") sehingga Tanggal ada di kolom C. Kolom nama boleh "Nama" / "Nama Pelanggan" / "Nama Customer" / "Pelanggan" / "Customer"; kolom lain yang tidak dikenal (mis. "Tgl Tagih") diabaikan. Baris tanpa nama DAN tanpa angka (No Inv sisa rumus auto-increment di ekor sheet) dilewati diam-diam; tanpa nama tapi ada angka tetap error. Pasangan (qty, "Harga") antara Nama dan Total. Angka format Indonesia (titik = ribuan) atau Inggris. Tanggal: `1-Jan-26`, D/M/Y, ISO, serial Excel. Baris dengan No Inv sama → digabung. Status yang diawali "PO" → `po_ref`, lainnya → notes. Tgl Byr + Nominal → payment, dialokasikan maksimal sebesar total invoice. Nomor yang sudah ada dilewati (idempoten). Customer/barang/satuan yang belum ada dibuat otomatis.
 
 Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot user. Fakta penting yang ditemukan di sana:
 - No Inv **3860 muncul 2x** (digabung). Hitungan 11.217.043 vs sheet 11.233.113 → **selisih 16.070**.
 - 3860 dibayar Cash 10.933.000 + transfer Anthony 300.000 (transfer ada di teks Status, bukan kolom Nominal) → kurang 113 → tombol pembulatan.
 - 3858 Adi D: qty tanpa harga (total 0).
 - "Return 45kg", "susut 5.2kg" hanya teks; total tidak dikurangi.
+- Sheet asli "AR GTA-APG" tab **"AR Telur HUB Global - APG"** (gid 1576503210, layout baru kolom C, s/d 23 Okt 2026, 5.988 baris): 3.484 invoice, 22 error asli (No Inv sama dipakai 2 nama berbeda). **Upload .xlsx, bukan .csv**: CSV Google Sheet berisi nilai TAMPILAN (kg dibulatkan 2 desimal) -> 580 invoice "selisih total" palsu; .xlsx (nilai asli) -> 62 selisih yang memang ada.
 
 ## 6. Menjalankan & tes
 
 - `npm run dev` → API :3200 (`node --watch`) + Vite :5180. `scripts/dev.js --db=nama` memakai DB lain.
 - Preview di sesi Claude: config `telur-erp-uitest` di `C:\Users\Han\Downloads\Claude\.claude\launch.json` → `scripts/uitest.js` (port **3299**, DB `telur_erp_uitest_zz`, build terpisah `npx vite build --outDir dist-uitest`). **Uji UI selalu di sini**, jangan di `telur_erp_db` / port 3200 / folder `dist` (milik app user yang mungkin sedang jalan). DB uitest dihapus setelah selesai.
-- `npm test` = 31 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
+- `npm test` = 32 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
 - Sudah di-mutation-test: 13/14 mutasi tertangkap. Satu yang lolos (EPS di status lunas) adalah mutan ekuivalen karena `outstanding` sudah di-round2.
 
 ## 7. Jebakan yang sudah ditemui
@@ -104,6 +105,8 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **3.2.0 (2026-10-29)**: import mengikuti perubahan kolom sheet (screenshot user: kolom A-B "Sisca Done"/"Yusuf Done", Tanggal di kolom C, "Nama Pelanggan", "Tgl Tagih") - dibaca **mulai kolom Tanggal**, kolom kiri diabaikan; sebelumnya ditolak "Kolom wajib tidak ditemukan: name". Baris ekor tanpa nama & tanpa angka tidak lagi jadi error (1.764 error palsu di tab asli). Tes baru: layout baru menghasilkan invoice IDENTIK dengan layout lama, judul kiri yang bentrok ("Nama"/"Total") diabaikan, ekor kosong dilewati; 3 mutasi (nama pelanggan, mulai kolom C, lewati ekor) tertangkap. Dicek ke sheet asli (baca-saja). 32 tes.
 
 - **Deploy (2026-10-17, v3.1.0)**: Railway dikendalikan lewat Claude in Chrome dengan izin user per langkah (buat project dari repo, tambah MySQL berbayar). SETUP_CODE diketik sendiri oleh user. Domain baru dinyalakan SETELAH log tidak lagi berisi peringatan SETUP_CODE. Verifikasi: /healthz ok, /api/version 3.1.0, /api/auth/status setupCodeRequired=true.
 

@@ -83,6 +83,31 @@ test('import sheet contoh user: 16 invoice, 3860 digabung, selisih 16.070 terdet
   assert.equal(by['3853'].payments[0].date, '2026-01-02');
 });
 
+test('import layout sheet Okt 2026: kolom centang A-B diabaikan (baca mulai kolom C), "Nama Pelanggan", "Tgl Tagih"', () => {
+  // screenshot user: A-B = "Please Mark" / "Sisca Done" "Yusuf Done" (centang), lalu Tanggal di kolom C;
+  // kolom nama jadi "Nama Pelanggan", ada "Tgl Tagih" di antara Total dan Tgl Byr
+  const geser = sample.map((r, i) => {
+    const kiri = i === 0 ? ['Please Mark', ''] : i === 1 ? ['Sisca Done', 'Yusuf Done'] : [i % 2 === 0, false];
+    const isi = i === 1 ? r.map((v) => (v === 'Nama' ? 'Nama Pelanggan' : v)) : r;
+    return [...kiri, ...isi.slice(0, 16), i === 1 ? 'Tgl Tagih' : i > 1 ? '5-Jan-26' : '', ...isi.slice(16)];
+  });
+  const baru = parseSheet(geser);
+  const lama = parseSheet(sample);
+  assert.equal(baru.error, undefined);
+  assert.deepEqual(baru.errors, []);
+  assert.deepEqual(baru.items, lama.items);
+  assert.deepEqual(baru.invoices, lama.invoices); // termasuk baris, pembayaran, selisih 3860 & peringatan
+  // apa pun judul kolom di KIRI Tanggal tidak ikut dibaca (mis. kolom tanda bernama "Nama" / "Total")
+  const kiriBentrok = geser.map((r, i) => (i === 1 ? ['Nama', 'Total', ...r.slice(2)] : r));
+  assert.deepEqual(parseSheet(kiriBentrok).invoices, lama.invoices);
+  // ekor sheet: No Inv dari rumus auto-increment tanpa nama & tanpa angka -> dilewati diam-diam;
+  // tapi No Inv tanpa nama yang ADA angkanya tetap error
+  const kosong = (no, kg = '') => [false, false, '', no, '', kg, kg ? '28.000' : '', ...Array(16).fill('')];
+  const ekor = parseSheet([...geser, kosong('3867'), kosong('3868'), kosong('3869', '10')]);
+  assert.deepEqual(ekor.errors, ['Baris 22: Nama kosong']);
+  assert.equal(ekor.invoices.length, lama.invoices.length);
+});
+
 test('import: header tidak ada / nomor sama untuk pihak berbeda', () => {
   assert.ok(parseSheet([['a', 'b']]).error);
   const other = sample[2].map((v, i) => (i === 2 ? 'Orang Lain' : v));

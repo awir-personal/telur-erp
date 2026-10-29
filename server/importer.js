@@ -13,16 +13,20 @@ function findHeader(rows) {
   return -1;
 }
 
-function parseSheet(rows, { numberFormat = 'id' } = {}) {
-  const h = findHeader(rows);
+function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
+  const h = findHeader(sheetRows);
   if (h < 0) return { error: 'Baris header tidak ditemukan (butuh kolom "Tanggal" dan "No Inv").' };
+  // Mulai dari kolom "Tanggal": kolom tambahan di kirinya (mis. centang "Sisca Done" / "Yusuf Done"
+  // di kolom A-B sheet sejak Okt 2026) diabaikan - sheet dibaca mulai kolom C.
+  const start = sheetRows[h].map(norm).indexOf('tanggal');
+  const rows = sheetRows.map((r) => (r || []).slice(start));
   const head = rows[h].map(norm);
   const group = h > 0 ? rows[h - 1] || [] : [];
   const col = (pred) => head.findIndex(pred);
   const c = {
     date: col((x) => x === 'tanggal'),
     no: col((x) => x.includes('inv')),
-    name: col((x) => x === 'nama'),
+    name: col((x) => x === 'nama' || x === 'nama pelanggan' || x === 'nama customer' || x === 'pelanggan' || x === 'customer'),
     total: col((x) => x === 'total'),
     payDate: col((x) => x.startsWith('tgl') && x.includes('byr') || x === 'tgl bayar'),
     nominal: col((x) => x === 'nominal'),
@@ -51,6 +55,9 @@ function parseSheet(rows, { numberFormat = 'id' } = {}) {
     const no = String(row[c.no] ?? '').trim();
     const name = String(row[c.name] ?? '').trim();
     if (!no && !name) continue;
+    // baris tanpa nama & tanpa angka = sisa rumus No Inv yang auto-increment di ekor sheet -> bukan data
+    const hasNumber = [...pairs.flatMap((p) => [row[p.qtyCol], row[p.priceCol]]), row[c.total]].some((v) => { const n = num(v); return n && !Number.isNaN(n); });
+    if (!name && !hasNumber) continue;
     const rowNum = r + 1;
     if (!no) { errors.push(`Baris ${rowNum}: No Inv kosong`); continue; }
     if (!name) { errors.push(`Baris ${rowNum}: Nama kosong`); continue; }
