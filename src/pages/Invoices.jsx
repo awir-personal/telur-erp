@@ -5,6 +5,7 @@ import { get, qs } from '../api';
 import { ErrorBox, PageTitle, StatusBadge, useAuth, useLoad } from '../components/ui';
 import { firstOfMonth, qty, rp, tgl, today, STATUS } from '../format';
 import { downloadXlsx, xlDate } from '../lib/excel';
+import { esbPurchaseAoa } from '../lib/esb.mjs';
 
 const ROW_BG = { lunas: 'bg-green-50', sebagian: 'bg-amber-50', belum: '', lebih_bayar: 'bg-purple-50' };
 
@@ -59,14 +60,33 @@ export default function InvoicesPage({ kind }) {
     downloadXlsx(`${isSale ? 'Penjualan' : 'Pembelian'} ${f.from} sd ${f.to}.xlsx`, [{ name: isSale ? 'Penjualan' : 'Pembelian', aoa: [head1, head2, ...body], merges, widths }]);
   };
 
+  // Nota pembelian -> format import ESB "Simple Purchase" (sesuai filter yang sedang tampil).
+  const [esbMsg, setEsbMsg] = useState(null);
+  const exportEsb = () => exportEsbRun().catch((e) => setEsbMsg('Gagal export ESB: ' + e.message));
+  const exportEsbRun = async () => {
+    const sups = await get('/parties?kind=supplier');
+    const term = new Map(sups.map((p) => [p.id, Number(p.term_days)]));
+    const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
+    const { aoa, count, skipped, adjusted } = esbPurchaseAoa(rows, (inv) => term.get(inv.party_id) ?? days(inv.date, inv.due_date), xlDate);
+    const widths = [9, 22, 10, 12, 15, 14, 9, 11, 9, 11, 22, 9, 6, 7, 18, 7, 10, 10, 6, 6, 9, 9, 10, 14, 30];
+    if (count) await downloadXlsx(`ESB Simple Purchase ${f.from || 'awal'} sd ${f.to || 'akhir'}.xlsx`, [{ name: 'Sheet1', aoa, widths, dateFormat: 'm/d/yy', plainNumbers: true }]);
+    setEsbMsg([
+      `${count} nota (${aoa.length - 1} baris barang) di-export ke format ESB.`,
+      skipped.length && `Dilewati: ${skipped.join(', ')}.`,
+      adjusted.length && `Retur/diskon/penyesuaian TIDAK ikut di file ESB (catat terpisah di ESB): ${adjusted.join(', ')}.`,
+    ].filter(Boolean).join(' '));
+  };
+
   return (
     <div>
       <PageTitle right={<>
         <button className="btn-ghost" onClick={exportExcel} disabled={!rows.length}>⬇ Excel</button>
+        {!isSale && <button className="btn-ghost" onClick={exportEsb} disabled={!rows.length} title="Nota pembelian sesuai filter -> file import ESB Simple Purchase">⬇ Export ESB</button>}
         {perms.invoice && <Link className="btn-primary" to={isSale ? '/penjualan/baru' : '/pembelian/baru'}>+ {isSale ? 'Invoice Penjualan' : 'Nota Pembelian'}</Link>}
       </>}>
         {isSale ? 'Penjualan' : 'Pembelian'}
       </PageTitle>
+      {esbMsg && <div className={`mb-3 flex items-start justify-between gap-2 rounded border p-2 text-sm ${/TIDAK|Dilewati|Gagal/.test(esbMsg) ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}><span>{esbMsg}</span><button className='text-slate-500' onClick={() => setEsbMsg(null)} title='Tutup'>✕</button></div>}
       <div className="card mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <label><span className="lbl">Dari</span><input type="date" className="inp" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></label>
         <label><span className="lbl">Sampai</span><input type="date" className="inp" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></label>

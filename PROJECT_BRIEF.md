@@ -52,6 +52,7 @@ ERP sederhana untuk perusahaan **distribusi telur** milik user: beli telur dari 
 - `accounts` (kas/bank, saldo awal + tanggal saldo awal), `cash_categories` (biaya/pemasukan/modal/prive), `cash_txns` (biaya, pemasukan, modal, prive, transfer), `payments.account_id` (opsional).
 - Saldo = saldo awal + mutasi SEJAK tanggal saldo awal. Mutasi sebelum tanggal itu tidak dihitung (sudah termasuk di saldo awal) dan dilaporkan sebagai `ignoredBeforeOpening`. Logikanya ada di `server/routes/cash.js` (`movements`, `balanceOf`), dipakai bersama oleh Dashboard.
 - Export Excel di browser (`src/lib/excel.js`): angka tetap angka, tanggal jadi sel tanggal asli (format d-mmm-yy). Export Penjualan/Pembelian memakai susunan sheet lama (2 baris header + merge).
+- **Export ESB Simple Purchase** (v3.4, tombol "⬇ Export ESB" di halaman Pembelian, ikut filter yang tampil): `src/lib/esb.mjs` (murni, dites di node) -> sheet "Sheet1" 25 kolom persis template `ESB_FNB_SIMPLE_PURCHASE_TEMPLATE_INDEX-new.xlsx` user. 1 nota = 1 Sequence (semua baris barangnya), Supplier = nama supplier ERP, Date = tanggal Excel asli format m/d/yy, Branch "Head Office", Location "Main Warehouse", Payment Method "Credit" (isian file ESB lama user), **Credit Term = termin supplier di ERP**, **Supplier Invoice Number "Invoice <No>"**, Additional Info "<Supplier> Invoice <No>", IDR/1/Item, Unit "Kg"/"Tray" (huruf besar di depan), Disc 0, kolom lain KOSONG (sel tidak ada, bukan teks kosong). Nama barang "Telor ..." ditulis "Telur ..." di file ESB saja (master barang ESB user memakai "Telur"; nama ERP tidak diubah supaya import sheet tetap cocok). Nota tanpa barang dilewati; nota yang punya retur/diskon/penyesuaian diperingatkan (penyesuaian tidak bisa jadi baris Item, catat terpisah di ESB). Nama supplier & barang harus sudah ada di master ESB.
 - Cetak invoice: `/invoice/:id/cetak` → `window.print()` (PDF lewat "Simpan sebagai PDF"). Data perusahaan (nama, alamat, telepon) diatur di Pengaturan.
 
 ### Rekonsiliasi bank (v3.0, migrasi `003_rekonsiliasi_jurnal`)
@@ -87,7 +88,7 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 
 - `npm run dev` → API :3200 (`node --watch`) + Vite :5180. `scripts/dev.js --db=nama` memakai DB lain.
 - Preview di sesi Claude: config `telur-erp-uitest` di `C:\Users\Han\Downloads\Claude\.claude\launch.json` → `scripts/uitest.js` (port **3299**, DB `telur_erp_uitest_zz`, build terpisah `npx vite build --outDir dist-uitest`). **Uji UI selalu di sini**, jangan di `telur_erp_db` / port 3200 / folder `dist` (milik app user yang mungkin sedang jalan). DB uitest dihapus setelah selesai.
-- `npm test` = 32 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
+- `npm test` = 33 tes (logika murni, parser bank, migrasi, alur API penuh di DB `*_zz` yang dibuat & dihapus sendiri). Butuh MySQL menyala.
 - Sudah di-mutation-test: 13/14 mutasi tertangkap. Satu yang lolos (EPS di status lunas) adalah mutan ekuivalen karena `outstanding` sudah di-round2.
 
 ## 7. Jebakan yang sudah ditemui
@@ -107,6 +108,8 @@ Data acuan `test/fixtures/sheet-sample.js` = 17 baris persis dari screenshot use
 Cetak/PDF invoice, penutupan susut harian, dashboard ringkas, tombol duplikat invoice, export Excel.
 
 ## 9. Riwayat versi
+
+- **3.4.0 (2026-10-29)**: tombol **⬇ Export ESB** di Pembelian -> file import ESB "Simple Purchase" (keputusan user: sumber = nota pembelian ERP, Supplier Invoice Number "Invoice <No>", Credit Term ikut termin supplier). Diverifikasi end-to-end di browser uji: file hasil klik ditangkap di halaman dan dibaca ulang - Sheet1, header identik template, tanggal sel tanggal (numFmt 14), angka numerik, kolom tak dipakai benar-benar kosong, "Telur Curah". 33 tes, 6/6 mutasi export tertangkap.
 
 - **3.3.0 (2026-10-29)**: import "1 baris sheet = 1 invoice apa adanya" - No Inv dobel (nama sama maupun beda) masuk sebagai beberapa invoice bernomor sama, ditandai "dobel" di daftar & detail, masuk tindak lanjut Dashboard sampai diberi catatan (kartu "No Inv … dipakai N invoice" + link ke semua invoice nomor itu, `/penjualan?q=` kini dibaca dari URL). Migrasi 004 (unik No Inv dilepas, `import_seq`, `dup_note`) diuji pada salinan telur_erp_db (hanya schema_migrations bertambah, diulang 2x aman). Import ulang tetap idempoten (per seq; nomor hasil import lama yang digabung dilewati seluruhnya). 32 tes (calc & api diperbarui), 6/6 mutasi baru tertangkap. Diverifikasi di browser (uitest): Dashboard "4 invoice ber-No Inv dobel", daftar 3860 ×2 berlabel dobel, catatan diketik → kartu jadi ✓ & label abu-abu.
 

@@ -37,3 +37,4 @@ Lokasi: `C:\Users\Han\Downloads\Claude\telur-erp`. Repo private `awir-personal/t
 - Nilai angka dari mysql2 sudah berupa number (`decimalNumbers: true`). `{x && <JSX/>}` dengan x = 0 akan merender "0" di layar.
 - Import sheet dibaca mulai kolom "Tanggal" (sheet user punya kolom centang A-B sejak Okt 2026). Sarankan upload .xlsx, bukan .csv: CSV Google Sheet membulatkan angka tampilan sehingga muncul selisih total palsu.
 - **No Inv tidak unik sejak v3.3**: import = 1 baris sheet 1 invoice apa adanya (keputusan user), nomor dobel ditandai sampai diberi catatan. Jangan kembalikan ke "digabung" tanpa bertanya. Invoice manual tetap dicek dobel di aplikasi, bukan di DB.
+- Export ESB Simple Purchase (`src/lib/esb.mjs`) harus tetap persis template user (25 kolom, Sheet1, kolom kosong = sel tidak ada). Ubah isian tetap (Head Office / Main Warehouse / Credit) hanya kalau user minta.

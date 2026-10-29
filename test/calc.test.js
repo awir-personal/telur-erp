@@ -124,3 +124,28 @@ test('import: header tidak ada / nomor sama untuk pihak berbeda tetap masuk', ()
   const rusak = sample[2].map((v, i) => (i === 0 ? 'bukan tanggal' : v));
   assert.deepEqual(parseSheet([...sample.slice(0, 3), rusak, other]).invoices.map((i) => i.seq), [1, 3]);
 });
+
+test('export ESB Simple Purchase: header persis template user, 1 nota = 1 Sequence, isian kolom', async () => {
+  const { esbPurchaseAoa, ESB_PURCHASE_HEADER, esbUnit } = await import('../src/lib/esb.mjs');
+  // baris 1 file C:\Users\Han\Downloads\APG\GTA\ESB_FNB_SIMPLE_PURCHASE_TEMPLATE_INDEX-new.xlsx (2026-10-29)
+  assert.deepEqual(ESB_PURCHASE_HEADER, ['Sequence', 'Supplier', 'Date', 'Branch', 'Location', 'Payment Method', 'COANo', 'Cost Center', 'Project', 'Credit Term', 'Supplier Invoice Number', 'Currency', 'Rate', 'Type', 'Item', 'Unit', 'Qty', 'Price', 'Disc', 'Vat', 'Other Tax', 'Tax Rate', 'Amount', 'Notes', 'Additional Info']);
+  const line = (item_name, unit_name, qty, price) => ({ item_name, unit_name, qty, price });
+  const invs = [
+    { number: '3858', date: '2026-01-02', party_id: 7, party_name: 'APG / Farm', adjusted: 0, lines: [line('Telur Curah', 'kg', 783.07, 27600), line('Telur Putih', 'kg', 167.2, 26600)] },
+    { number: 'N-2', date: '2026-01-03', party_id: 8, party_name: 'Peternak B', adjusted: 50000, lines: [line('Tray/Peti', 'tray', 10, 3000)] },
+    { number: 'N-3', date: '2026-01-04', party_id: 8, party_name: 'Peternak B', adjusted: 0, lines: [line('Telur Curah', 'kg', 0, 1)] },
+  ];
+  const term = { 7: 90, 8: 30 };
+  const r = esbPurchaseAoa(invs, (i) => term[i.party_id]);
+  assert.equal(r.aoa[0], ESB_PURCHASE_HEADER);
+  assert.equal(r.count, 2);
+  assert.deepEqual(r.aoa[1], [1, 'APG / Farm', '2026-01-02', 'Head Office', 'Main Warehouse', 'Credit', null, null, null, 90, 'Invoice 3858', 'IDR', 1, 'Item', 'Telur Curah', 'Kg', 783.07, 27600, 0, null, null, null, null, null, 'APG / Farm Invoice 3858']);
+  assert.deepEqual(r.aoa.slice(1).map((x) => [x[0], x[9], x[14], x[15], x[16]]), [[1, 90, 'Telur Curah', 'Kg', 783.07], [1, 90, 'Telur Putih', 'Kg', 167.2], [2, 30, 'Tray/Peti', 'Tray', 10]]);
+  for (const row of r.aoa) assert.equal(row.length, 25);
+  assert.deepEqual(r.skipped, ['N-3 (Peternak B): tidak ada baris barang']);
+  assert.deepEqual(r.adjusted, ['N-2 (Peternak B)']); // retur/diskon tidak bisa ikut sebagai baris Item
+  assert.equal(esbUnit('kg'), 'Kg');
+  // nama barang dari sheet ("Telor ...") ditulis sesuai master ESB user ("Telur ...")
+  const t = esbPurchaseAoa([{ ...invs[0], lines: [line('Telor Curah', 'kg', 1, 1), line('Tray/Peti', 'tray', 1, 1)] }], () => 90);
+  assert.deepEqual(t.aoa.slice(1).map((x) => x[14]), ['Telur Curah', 'Tray/Peti']);
+});

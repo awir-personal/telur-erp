@@ -3,15 +3,16 @@
 export async function downloadXlsx(filename, sheets) {
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
-  for (const { name, aoa, merges = [], widths = [] } of sheets) {
+  // dateFormat / plainNumbers: untuk file yang diimport sistem lain (mis. template ESB: tanggal m/d/yy, angka apa adanya)
+  for (const { name, aoa, merges = [], widths = [], dateFormat = 'd-mmm-yy', plainNumbers = false } of sheets) {
     const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
     ws['!merges'] = merges;
     ws['!cols'] = widths.map((w) => ({ wch: w }));
     // Format ribuan untuk semua sel angka.
     for (const addr of Object.keys(ws)) {
       if (addr[0] === '!') continue;
-      if (ws[addr].t === 'n') ws[addr].z = Number.isInteger(ws[addr].v) ? '#,##0' : '#,##0.###';
-      if (ws[addr].t === 'd') ws[addr].z = 'd-mmm-yy'; // gaya sheet lama: 1-Jan-26
+      if (ws[addr].t === 'n' && !plainNumbers) ws[addr].z = Number.isInteger(ws[addr].v) ? '#,##0' : '#,##0.###';
+      if (ws[addr].t === 'd') ws[addr].z = dateFormat; // bawaan gaya sheet lama: 1-Jan-26
     }
     XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 31));
   }
