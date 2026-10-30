@@ -149,3 +149,117 @@ test('export ESB Simple Purchase: header persis template user, 1 nota = 1 Sequen
   const t = esbPurchaseAoa([{ ...invs[0], lines: [line('Telor Curah', 'kg', 1, 1), line('Tray/Peti', 'tray', 1, 1)] }], () => 90);
   assert.deepEqual(t.aoa.slice(1).map((x) => x[14]), ['Telur Curah', 'Tray/Peti']);
 });
+
+// ===== v4.2 penjualan GTA =====
+const H = require('../server/hariHari');
+
+test('rumus Hari-Hari: angka asli sheet SS-HariHari (kirim = kg + 2% + susut, tagihan = kg x harga - 0,25%)', () => {
+  // [kg tagih, harga, susut, qty kirim, disc value, tagihan] - baris asli sheet user
+  for (const [kg, price, susut, qty, disc, tagihan] of [
+    [750, 25100, 0, 765, 423562.5, 18777937.5],
+    [750, 25100, 1.4, 766.4, 458702.5, 18777937.5],
+    [749.1, 28000, 13, 777.082, 835933, 20922363],
+    [746.9, 28700, 16.715, 778.553, 962031.17, 21382439.93], // Omega Lokasari inv 93
+  ]) {
+    const h = H.hhCompute([{ qty: kg, price }], susut);
+    assert.equal(h.lines[0].qty, qty);
+    assert.equal(h.tagihan, tagihan);
+    assert.equal(h.disc, disc);
+    assert.equal(C.round2(h.gross - h.disc), tagihan);
+  }
+  // 2 barang: susut hanya di baris pertama, tagihan dari kg tagih semua baris
+  const two = H.hhCompute([{ qty: 500, price: 25000 }, { qty: 250, price: 26000 }], 2);
+  assert.deepEqual(two.lines.map((l) => l.qty), [512, 255]);
+  assert.equal(two.tagihan, C.round2((500 * 25000 + 250 * 26000) * 0.9975));
+});
+
+test('susut dari kolom Status: dijumlah, gabungan & gram tidak ditebak', () => {
+  const s = (t) => H.susutFromStatus(t);
+  assert.deepEqual(s('Susut 1.4 kg'), { susut: 1.4, warning: null });
+  assert.equal(s('susut 1.25').susut, 1.25);
+  assert.equal(s('Susut 1,5kg').susut, 1.5);
+  assert.equal(s('susut3.02kg').susut, 3.02);
+  assert.equal(s('susut 2. 54kg').susut, 2.54);
+  assert.equal(s('Plus 0.84kg').susut, 0.84);
+  assert.equal(s('susut 6.98kg + susut 3.752kg').susut, 10.732);
+  assert.deepEqual(s('-'), { susut: 0, warning: null });
+  assert.deepEqual(s('Plus Ongkir 30k'), { susut: 0, warning: null });
+  assert.equal(s('susut 12kg gabung inv 150 151').susut, 0);
+  assert.match(s('susut 12kg gabung inv 150 151').warning, /gabungan/);
+  assert.equal(s('susut 0.350gr').susut, 0);
+  assert.match(s('susut 0.350gr').warning, /gram/);
+  assert.ok(H.isDefaultBranch(' duta  harapan indah '));
+  assert.ok(!H.isDefaultBranch('PT. Agrinesia Raya'));
+});
+
+// Potongan tab "SiscaAR Telur - GTA" (Okt 2026): 2 baris grup/header, lalu data.
+const GTA_SHEET = [
+  ['', 'No GD', 'No PI', 'No PO', 'No GR', '', 'Telor Curah', '', 'Telur Omega', '', 'Telor Putih', '', 'Telor Retak', '', '', '', '', ''],
+  ['Tanggal', 'No Inv', 'No Nota Tagihan', 'NO PO', 'No Receive', 'Nama Pelanggan', 'kg', 'Harga', 'Kg', 'Harga', 'Kg', 'Harga', 'Kg', 'Harga', 'Total', 'Tgl Tagihan', 'Nominal', 'Status'],
+  [45890, 7951, 20054, 5216760, '', 'Kalideres', 750, 25100, '', '', '', '', '', '', 18825000, '26-Aug-25', 18777937.5, ''],
+  [45890, 7952, 20057, 5217475, '', 'Duta Harapan Indah', 750, 25100, '', '', '', '', '', '', 18825000, '27-Aug-25', 18777937.5, 'Susut 1.4 kg'],
+  [46020, 54, '', '', '', 'Damar Agung PP', 1799.76, 27800, '', '', '', '', '', '', 50033328, '', 50063328, 'Plus Ongkir 30k'],
+  [46042, 64, 'INV-000001', '260002645-0', '', 'PT. Agrinesia Raya', 2025, 26800, '', '', 975, 26800, '', '', 80400000, 46057, '', 'Grade A'],
+  [46100, 93, 11487, 4740141, 5619615, 'Lokasari', '', '', 746.9, 28700, '', '', '', '', 21436030, '', 21382439.93, 'Susut 16.715kg'],
+  [46110, 187, 2800, 4800000, '', 'Pluit', 750, 29700, '', '', '', '', '', '', 22275000, '', 21663829.7, '-'],
+];
+
+test('import sheet GTA: Nominal = tagihan (bukan pembayaran), referensi PI/PO/GR, rumus Hari-Hari hanya untuk cabang', () => {
+  const p = parseSheet(GTA_SHEET, { isHH: H.isDefaultBranch });
+  assert.equal(p.format, 'gta');
+  assert.deepEqual(p.errors, []);
+  const by = Object.fromEntries(p.invoices.map((i) => [i.number, i]));
+  for (const i of p.invoices) assert.deepEqual(i.payments, []);
+  const k = by['7951'];
+  assert.deepEqual([k.refPi, k.poRef, k.refGr], ['20054', '5216760', null]);
+  assert.deepEqual(k.lines.map((l) => [l.itemName, l.qty, l.price]), [['Telor Curah', 765, 25100]]);
+  assert.deepEqual(k.hh, { kgTagih: 750, susut: 0, disc: 423562.5, tagihan: 18777937.5 });
+  assert.equal(k.diff, 0);
+  assert.equal(by['7952'].lines[0].qty, 766.4);
+  assert.equal(by['7952'].hh.disc, 458702.5);
+  assert.equal(by['7952'].diff, 0);
+  assert.equal(by['93'].lines[0].itemName, 'Telur Omega');
+  assert.equal(by['93'].refGr, '5619615');
+  assert.equal(by['93'].diff, 0);
+  // Pluit 187: Nominal sheet berbeda dari rumus -> selisih untuk dijustifikasi, angka sheet tidak diubah
+  assert.equal(by['187'].diff, C.round2(21663829.7 - 22219312.5));
+  assert.match(by['187'].warnings.join(' '), /rumus Hari-Hari/);
+  // customer biasa: baris apa adanya; Nominal (kalau ada) jadi total sheet -> ongkir 30rb muncul sebagai selisih
+  assert.equal(by['54'].hh, undefined);
+  assert.deepEqual(by['54'].lines.map((l) => l.qty), [1799.76]);
+  assert.equal(by['54'].diff, 30000);
+  assert.equal(by['64'].diff, 0); // Nominal kosong -> Total
+  assert.deepEqual(by['64'].lines.map((l) => l.itemName), ['Telor Curah', 'Telor Putih']);
+  assert.equal(by['64'].notes, 'Grade A');
+  // tanpa tanda cabang: tidak ada yang dihitung rumus Hari-Hari
+  assert.ok(parseSheet(GTA_SHEET).invoices.every((i) => !i.hh));
+});
+
+test('export ESB Simple Sales: 2 baris atas persis template, Hari-Hari -> "Hari - Hari Swalayan" + cabang di Additional Info', async () => {
+  const { esbSalesAoa, ESB_SALES_HEADER, ESB_SALES_HELP } = await import('../src/lib/esb.mjs');
+  assert.equal(ESB_SALES_HEADER.length, 29);
+  assert.equal(ESB_SALES_HELP.length, 29);
+  assert.deepEqual(ESB_SALES_HEADER.slice(0, 6), ['Sequence', 'Sales Type', 'Customer', 'Customer Branch', 'Address', 'Simple Sales Date']);
+  assert.deepEqual(ESB_SALES_HEADER.slice(18, 29), ['Qty', 'Price', 'Disc %', 'Disc Value', 'VAT', 'Other Tax', 'Tax Rate', 'Amount', 'Notes', 'Additional Info', 'Footnote']);
+  const line = (item_name, qty, price) => ({ item_name, unit_name: 'kg', qty, price });
+  const invs = [
+    { number: '7952', date: '2025-08-21', party_id: 1, party_name: 'Duta Harapan Indah', hh_branch: 1, ref_pi: '20057', po_ref: '5217475', ref_gr: null, adjusted: 458702.5, lines: [line('Telor Curah', 766.4, 25100)] },
+    { number: '64', date: '2026-01-30', party_id: 2, party_name: 'PT. Agrinesia Raya', hh_branch: 0, ref_pi: 'INV-000001', po_ref: '260002645-0', ref_gr: null, adjusted: 120000, lines: [line('Telor Curah', 2025, 26800), line('Telor Putih', 975, 26800)] },
+    { number: '54', date: '2026-01-08', party_id: 3, party_name: 'Damar Agung PP', hh_branch: 0, adjusted: -30000, lines: [line('Telor Curah', 1799.76, 27800)] },
+  ];
+  const term = { 1: 30, 2: 45, 3: 7 };
+  const r = esbSalesAoa(invs, (i) => term[i.party_id]);
+  assert.equal(r.aoa[0], ESB_SALES_HELP);
+  assert.equal(r.aoa[1], ESB_SALES_HEADER);
+  assert.equal(r.count, 3);
+  for (const row of r.aoa) assert.equal(row.length, 29);
+  assert.deepEqual(r.aoa[2], ['1', 'Goods', 'Hari - Hari Swalayan', null, null, '21/08/2025', 'Head Office', 'Main Warehouse', 'Credit', null, 30, null, 'IDR', 1, 'Item', 'Telur Curah', null, 'Kg', 766.4, 25100, null,
+    458702.5, 'NO', null, null, null, null, 'Hari-Hari Duta Harapan Indah - No GD :7952, No PI :20057, No PO :5217475, No GR Client :', null]);
+  // customer biasa: nama sendiri, 1 Sequence untuk 2 barang, Additional Info hanya di baris teratas
+  assert.deepEqual(r.aoa.slice(3, 5).map((x) => [x[0], x[2], x[10], x[15], x[18], x[21], x[27]]), [
+    ['2', 'PT. Agrinesia Raya', 45, 'Telur Curah', 2025, null, 'PT. Agrinesia Raya - No GD :64, No PI :INV-000001, No PO :260002645-0, No GR Client :'],
+    ['2', 'PT. Agrinesia Raya', 45, 'Telur Putih', 975, null, null],
+  ]);
+  // retur/penyesuaian customer biasa tidak dijadikan Disc Value (Disc kosong di atas), hanya dilaporkan
+  assert.deepEqual(r.adjusted, ['64 (PT. Agrinesia Raya)', '54 (Damar Agung PP)']);
+});

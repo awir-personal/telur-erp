@@ -300,6 +300,15 @@ const MIGRATIONS = [
     addColumn('invoices', 'source_invoice_id', 'INT NULL'),
     addIndex('invoices', 'ix_inv_source', '(company_id, source_invoice_id)'),
   ]],
+  // v4.2 — penjualan GTA dari sheet "SiscaAR Telur - GTA": referensi No Nota Tagihan (PI) & No Receive (GR) di samping
+  // NO PO (po_ref); customer bertanda cabang Hari-Hari dihitung dengan rumus Hari-Hari (server/hariHari.js).
+  ['007_penjualan_gta', [
+    addColumn('parties', 'hh_branch', 'TINYINT NOT NULL DEFAULT 0'),
+    addColumn('invoices', 'ref_pi', 'VARCHAR(60) NULL'),
+    addColumn('invoices', 'ref_gr', 'VARCHAR(60) NULL'),
+    addColumn('invoices', 'hh_susut', 'DECIMAL(14,3) NULL'), // terisi = invoice dihitung rumus Hari-Hari saat import
+    addColumn('invoices', 'hh_disc', 'DECIMAL(15,2) NULL'), // diskon Hari-Hari (juga dicatat sebagai penyesuaian "diskon")
+  ]],
 ];
 
 function indexExists(conn, table, name) {

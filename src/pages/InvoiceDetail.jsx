@@ -67,6 +67,8 @@ export default function InvoiceDetail() {
             <div><span className="lbl">Tanggal</span>{tgl(d.date)}</div>
             <div><span className="lbl">Jatuh tempo</span>{tgl(d.due_date)}</div>
             <div><span className="lbl">PO / referensi</span>{d.po_ref || '—'}</div>
+            {(d.ref_pi || d.ref_gr) && <div><span className="lbl">No Nota Tagihan (PI) / No Receive (GR)</span>{d.ref_pi || '—'} / {d.ref_gr || '—'}</div>}
+            {d.hh_disc != null && <div className="col-span-2"><span className="lbl">Rumus Hari-Hari (saat import)</span>kirim = kg tagih + 2%{Number(d.hh_susut) ? ` + susut ${qty(d.hh_susut)} kg` : ''}; tagihan = kg tagih × harga − 0,25% = <b>{rp(d.total - d.hh_disc)}</b> (diskon {rp(d.hh_disc)})</div>}
             <div className="col-span-2"><span className="lbl">Keterangan</span>{d.notes || '—'}</div>
           </div>
         </div>
@@ -96,7 +98,9 @@ export default function InvoiceDetail() {
       {d.importDiff !== 0 && (
         <div className={`card border-2 ${d.diffOpen ? 'border-red-300 bg-red-50' : 'border-slate-200'}`}>
           <h3 className="mb-1 font-semibold">{d.diffOpen ? '⚠ ' : '✓ '}Selisih total sheet vs hitungan</h3>
-          <p className="text-sm">Total di sheet asal <b>{rp(d.imported_total)}</b>, hitungan (jumlah × harga) <b>{rp(d.total)}</b>, selisih <b>{rp(d.importDiff)}</b>.</p>
+          {d.hh_disc != null
+            ? <p className="text-sm">Nominal di sheet asal <b>{rp(d.imported_total - d.hh_disc)}</b>, tagihan rumus Hari-Hari <b>{rp(d.total - d.hh_disc)}</b>, selisih <b>{rp(d.importDiff)}</b>.</p>
+            : <p className="text-sm">Total di sheet asal <b>{rp(d.imported_total)}</b>, hitungan (jumlah × harga) <b>{rp(d.total)}</b>, selisih <b>{rp(d.importDiff)}</b>.</p>}
           <p className="mb-2 text-xs text-slate-600">Pilih salah satu: <b>ubah baris</b> (Edit) bila ada yang salah ketik, atau <b>tulis justifikasi</b>. Kalau angka sheet yang benar, tombol "Samakan dengan total sheet" akan menambah penyesuaian sebesar selisih.</p>
           {perms.note && (
             <div className="flex flex-col gap-2 sm:flex-row">

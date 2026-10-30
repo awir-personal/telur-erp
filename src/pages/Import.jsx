@@ -14,13 +14,14 @@ export default function ImportPage() {
   const [plan, setPlan] = useState(null);
   const [ignoreErrors, setIgnoreErrors] = useState(false);
   const [result, setResult] = useState(null);
+  const [hhNames, setHhNames] = useState(null); // v4.2 sheet GTA: customer BARU yang dicentang sebagai cabang Hari-Hari
   const a = useAction();
   const confirm = useConfirm();
 
   const rows = () => (wb ? wb.sheets[sheet] : paste.split(/\r?\n/).map((l) => l.split('\t')));
 
   const readFile = (file) => a.run(async () => {
-    setPlan(null); setResult(null);
+    reset(); setResult(null);
     const XLSX = await import('xlsx');
     const isCsv = /\.csv$/i.test(file.name);
     // CSV dibaca sebagai teks mentah supaya "28.000" tidak diubah jadi 28 oleh parser.
@@ -30,11 +31,18 @@ export default function ImportPage() {
     setSheet(book.SheetNames[0]);
   });
 
-  const preview = () => a.run(async () => { setResult(null); setPlan(await post('/import/preview', { rows: rows(), numberFormat: fmt })); });
+  const preview = (names = hhNames) => a.run(async () => {
+    setResult(null);
+    const p = await post('/import/preview', { rows: rows(), numberFormat: fmt, hhNames: names });
+    setPlan(p);
+    setHhNames(p.newParties ? p.newParties.filter((x) => x.hh).map((x) => x.name) : null);
+  });
+  const toggleHH = (name, on) => preview([...(hhNames || []).filter((n) => n !== name), ...(on ? [name] : [])]);
+  const reset = () => { setPlan(null); setHhNames(null); };
   const commit = () => a.run(async () => {
     if (!await confirm(`Import ${plan.invoices.filter((i) => !i.exists).length} invoice ke database?`, { danger: false, confirmLabel: 'Import' })) return;
-    setResult(await post('/import/commit', { rows: rows(), numberFormat: fmt, ignoreErrors }));
-    setPlan(null);
+    setResult(await post('/import/commit', { rows: rows(), numberFormat: fmt, ignoreErrors, hhNames }));
+    reset();
   });
 
   const fresh = plan?.invoices.filter((i) => !i.exists) || [];
@@ -42,14 +50,14 @@ export default function ImportPage() {
     <div className="space-y-3">
       <PageTitle>Import Penjualan dari Sheet</PageTitle>
       <div className="card space-y-3 text-sm">
-        <p className="text-xs text-slate-600">Format yang dibaca: baris header berisi <b>Tanggal, No Inv, Nama</b>, lalu pasangan kolom (jumlah, <b>Harga</b>) per barang dengan nama barang di baris atasnya, lalu <b>Total, Tgl Byr, Nominal, Status</b>. Baris dengan No Inv sama digabung jadi 1 invoice. Nomor yang sudah ada di database dilewati, jadi aman diimpor ulang.</p>
+        <p className="text-xs text-slate-600">Format yang dibaca: baris header berisi <b>Tanggal, No Inv, Nama</b>, lalu pasangan kolom (jumlah, <b>Harga</b>) per barang dengan nama barang di baris atasnya, lalu <b>Total, Tgl Byr, Nominal, Status</b>. 1 baris = 1 invoice; baris yang sudah pernah diimpor dilewati, jadi aman diimpor ulang. <b>Sheet GTA</b> ("SiscaAR Telur - GTA", kolom No Nota Tagihan / NO PO / No Receive) dikenali otomatis — pilih perusahaan GTA di header: Nominal = tagihan (bukan pembayaran), customer cabang Hari-Hari dihitung rumus Hari-Hari (kirim = kg + 2% + susut dari kolom Status, tagihan − 0,25%).</p>
         <div className="flex flex-wrap items-end gap-3">
           <label><span className="lbl">File .xlsx / .csv (Google Sheet: File → Download)</span><input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => e.target.files[0] && readFile(e.target.files[0])} /></label>
           {wb && Object.keys(wb.sheets).length > 1 && (
-            <label><span className="lbl">Sheet/tab</span><select className="inp" value={sheet} onChange={(e) => { setSheet(e.target.value); setPlan(null); }}>{Object.keys(wb.sheets).map((n) => <option key={n}>{n}</option>)}</select></label>
+            <label><span className="lbl">Sheet/tab</span><select className="inp" value={sheet} onChange={(e) => { setSheet(e.target.value); reset(); }}>{Object.keys(wb.sheets).map((n) => <option key={n}>{n}</option>)}</select></label>
           )}
           <label><span className="lbl">Format angka</span>
-            <select className="inp" value={fmt} onChange={(e) => { setFmt(e.target.value); setPlan(null); }}>
+            <select className="inp" value={fmt} onChange={(e) => { setFmt(e.target.value); reset(); }}>
               <option value="id">Indonesia: 1.234.567,89</option>
               <option value="en">Inggris: 1,234,567.89</option>
             </select>
@@ -57,10 +65,10 @@ export default function ImportPage() {
         </div>
         {!wb && (
           <label className="block"><span className="lbl">…atau tempel langsung dari Google Sheet (blok mulai dari baris nama barang sampai baris data terakhir, lalu Ctrl+C)</span>
-            <textarea className="inp h-28 font-mono text-xs" value={paste} onChange={(e) => { setPaste(e.target.value); setPlan(null); }} /></label>
+            <textarea className="inp h-28 font-mono text-xs" value={paste} onChange={(e) => { setPaste(e.target.value); reset(); }} /></label>
         )}
-        {wb && <p className="text-xs">File: <b>{wb.name}</b> <button className="text-sky-700 underline" onClick={() => { setWb(null); setPlan(null); }}>ganti</button></p>}
-        <button className="btn-primary" onClick={preview} disabled={a.busy || (!wb && !paste.trim())}>Cek dulu (preview)</button>
+        {wb && <p className="text-xs">File: <b>{wb.name}</b> <button className="text-sky-700 underline" onClick={() => { setWb(null); reset(); }}>ganti</button></p>}
+        <button className="btn-primary" onClick={() => preview(null)} disabled={a.busy || (!wb && !paste.trim())}>Cek dulu (preview)</button>
       </div>
       <ErrorBox error={a.error} />
 
@@ -83,7 +91,16 @@ export default function ImportPage() {
             <span>· sudah ada (dilewati): {plan.invoices.length - fresh.length}</span>
             <span>· dengan selisih: {plan.invoices.filter((i) => i.diff).length}</span>
             <span>· kolom barang: {plan.items.join(', ')}</span>
+            {plan.format === 'gta' && <span className="rounded bg-teal-100 px-1 text-xs font-semibold text-teal-800">format sheet GTA · Hari-Hari: {plan.invoices.filter((i) => i.hh).length} invoice</span>}
           </div>
+          {plan.newParties?.length > 0 && (
+            <div className="mb-2 rounded border border-orange-200 bg-orange-50 p-2 text-xs">
+              <b>Customer baru ({plan.newParties.length}) — centang yang merupakan cabang Hari-Hari</b> (awalnya hanya 13 cabang yang sudah dikenal; nama lain tidak ditebak). Customer yang sudah ada mengikuti tanda "Cabang Hari-Hari" di Master.
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                {plan.newParties.map((p) => <label key={p.name} className="flex items-center gap-1"><input type="checkbox" checked={p.hh} disabled={a.busy} onChange={(e) => toggleHH(p.name, e.target.checked)} />{p.name}</label>)}
+              </div>
+            </div>
+          )}
           {plan.errors.length > 0 && (
             <div className="mb-2 rounded border border-red-300 bg-red-50 p-2 text-xs text-red-700">
               <b>{plan.errors.length} baris error (tidak akan diimpor):</b>
@@ -93,23 +110,23 @@ export default function ImportPage() {
           )}
           <div className="max-h-[60vh] overflow-auto rounded border">
             <table className="sheet w-full border-collapse">
-              <thead className="sticky top-0"><tr><th>No Inv</th><th>Tanggal</th><th>Nama</th><th>Barang</th><th>Total sheet</th><th>Hitungan</th><th>Selisih</th><th>Pembayaran</th><th>PO / catatan</th><th>Peringatan</th></tr></thead>
+              <thead className="sticky top-0"><tr><th>No Inv</th><th>Tanggal</th><th>Nama</th><th>Barang</th><th>{plan.format === 'gta' ? 'Nominal / total sheet' : 'Total sheet'}</th><th>Hitungan</th><th>Selisih</th><th>Pembayaran</th><th>PO / catatan</th><th>Peringatan</th></tr></thead>
               <tbody>
                 {plan.invoices.map((i) => (
                   <tr key={`${i.number}#${i.seq}`} className={i.exists ? 'text-slate-400 line-through' : i.diff ? 'bg-red-50' : i.warnings.length ? 'bg-amber-50' : ''}>
-                    <td className="font-medium">{i.number}{i.dupCount > 1 && <span className="ml-1 rounded bg-amber-200 px-1 text-[10px] font-semibold text-amber-900" title={`No Inv ini ada di ${i.dupCount} baris sheet - masuk apa adanya, beri catatan setelah import`}>dobel {i.seq}/{i.dupCount}</span>}<div className="text-[10px] text-slate-400">baris {i.rows[0]}</div></td><td>{tgl(i.date)}</td><td>{i.partyName}</td>
-                    <td className="whitespace-normal">{i.lines.map((l) => `${l.itemName} ${l.qty} ${l.unitName} × ${rp(l.price)}`).join('; ')}</td>
-                    <td className="text-right">{rp(i.importedTotal)}</td><td className="text-right">{rp(i.computedTotal)}</td>
+                    <td className="font-medium">{i.number}{i.dupCount > 1 && <span className="ml-1 rounded bg-amber-200 px-1 text-[10px] font-semibold text-amber-900" title={`No Inv ini ada di ${i.dupCount} baris sheet - masuk apa adanya, beri catatan setelah import`}>dobel {i.seq}/{i.dupCount}</span>}<div className="text-[10px] text-slate-400">baris {i.rows[0]}</div></td><td>{tgl(i.date)}</td><td>{i.partyName}{i.hh && <span className="ml-1 rounded bg-orange-100 px-1 text-[10px] font-semibold text-orange-800">HH</span>}</td>
+                    <td className="whitespace-normal">{i.lines.map((l) => `${l.itemName} ${l.kgTagih != null ? `tagih ${l.kgTagih} → kirim ` : ''}${l.qty} ${l.unitName} × ${rp(l.price)}`).join('; ')}{i.hh && <div className="text-[10px] text-slate-500">susut {i.hh.susut} kg · diskon {rp(i.hh.disc)}</div>}</td>
+                    <td className="text-right">{rp(i.hh ? i.nominal : i.importedTotal)}</td><td className="text-right">{rp(i.hh ? i.hh.tagihan : i.computedTotal)}</td>
                     <td className={`text-right ${i.diff ? 'font-bold text-red-600' : ''}`}>{i.diff ? rp(i.diff) : ''}</td>
                     <td className="whitespace-normal">{i.payments.map((p) => `${tgl(p.date)} ${METHOD[p.method]} ${rp(p.amount)}`).join('; ')}</td>
-                    <td className="whitespace-normal">{[i.poRef, i.notes].filter(Boolean).join(' | ')}</td>
+                    <td className="whitespace-normal">{[i.refPi && `PI ${i.refPi}`, i.poRef, i.refGr && `GR ${i.refGr}`, i.notes].filter(Boolean).join(' | ')}</td>
                     <td className="min-w-[260px] whitespace-normal text-amber-800">{i.exists ? 'Sudah ada di database — dilewati' : i.warnings.join(' • ')}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="my-2 text-xs text-slate-500">1 baris sheet = 1 invoice, apa adanya: No Inv yang muncul di beberapa baris masuk sebagai beberapa invoice bernomor sama (label "dobel") dan muncul di daftar tindak lanjut sampai diberi catatan. Harga beli tidak ada di sheet, jadi isi lewat Edit invoice bila ingin margin. Retur/susut di kolom Status hanya disimpan sebagai catatan. Catat nominalnya lewat "Penyesuaian" di detail invoice.</p>
+          <p className="my-2 text-xs text-slate-500">1 baris sheet = 1 invoice, apa adanya: No Inv yang muncul di beberapa baris masuk sebagai beberapa invoice bernomor sama (label "dobel") dan muncul di daftar tindak lanjut sampai diberi catatan. Harga beli tidak ada di sheet, jadi isi lewat Edit invoice bila ingin margin. Retur/susut di kolom Status hanya disimpan sebagai catatan (kecuali susut cabang Hari-Hari di sheet GTA, yang masuk rumus). Catat nominalnya lewat "Penyesuaian" di detail invoice.</p>
           <button className="btn-primary" onClick={commit} disabled={a.busy || !fresh.length || (plan.errors.length > 0 && !ignoreErrors)}>Import {fresh.length} invoice</button>
         </div>
       )}

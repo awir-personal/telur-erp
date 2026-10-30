@@ -5,7 +5,7 @@ import { get, qs } from '../api';
 import { ErrorBox, PageTitle, StatusBadge, useAuth, useLoad } from '../components/ui';
 import { firstOfMonth, qty, rp, tgl, today, STATUS } from '../format';
 import { downloadXlsx, xlDate } from '../lib/excel';
-import { esbPurchaseAoa } from '../lib/esb.mjs';
+import { esbPurchaseAoa, esbSalesAoa, ESB_SALES_SHEET } from '../lib/esb.mjs';
 import ApgPull from '../components/ApgPull';
 
 const ROW_BG = { lunas: 'bg-green-50', sebagian: 'bg-amber-50', belum: '', lebih_bayar: 'bg-purple-50' };
@@ -66,6 +66,7 @@ export default function InvoicesPage({ kind }) {
   const [esbMsg, setEsbMsg] = useState(null);
   const exportEsb = () => exportEsbRun().catch((e) => setEsbMsg('Gagal export ESB: ' + e.message));
   const exportEsbRun = async () => {
+    if (isSale) return exportEsbSales();
     const sups = await get('/parties?kind=supplier');
     const term = new Map(sups.map((p) => [p.id, Number(p.term_days)]));
     const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000);
@@ -78,13 +79,26 @@ export default function InvoicesPage({ kind }) {
       adjusted.length && `Retur/diskon/penyesuaian TIDAK ikut di file ESB (catat terpisah di ESB): ${adjusted.join(', ')}.`,
     ].filter(Boolean).join(' '));
   };
+  // v4.2 Invoice penjualan (GTA) -> ESB "Simple Sales"
+  const exportEsbSales = async () => {
+    const custs = await get('/parties?kind=customer');
+    const term = new Map(custs.map((p) => [p.id, Number(p.term_days)]));
+    const { aoa, count, skipped, adjusted } = esbSalesAoa(rows, (inv) => term.get(inv.party_id));
+    const widths = [9, 8, 24, 10, 10, 12, 12, 15, 10, 8, 10, 10, 8, 6, 6, 16, 9, 6, 9, 9, 7, 11, 5, 8, 8, 10, 10, 60, 10];
+    if (count) await downloadXlsx(`ESB Simple Sales ${f.from || 'awal'} sd ${f.to || 'akhir'}.xlsx`, [{ name: ESB_SALES_SHEET, aoa, widths, plainNumbers: true }]);
+    setEsbMsg([
+      `${count} invoice (${aoa.length - 2} baris barang) di-export ke format ESB Simple Sales.`,
+      skipped.length && `Dilewati: ${skipped.join(', ')}.`,
+      adjusted.length && `Retur/diskon/penyesuaian customer biasa TIDAK ikut di file ESB (catat terpisah di ESB): ${adjusted.join(', ')}.`,
+    ].filter(Boolean).join(' '));
+  };
 
   return (
     <div>
       <PageTitle right={<>
         <button className="btn-ghost" onClick={exportExcel} disabled={!rows.length}>⬇ Excel</button>
         {!isSale && company?.id !== 1 && perms.invoice && <button className="btn-ghost" onClick={() => setPullOpen(true)} title="Salin penjualan APG ke customer bertanda Pembelian GTA menjadi nota pembelian dari APG / Farm">⇩ Tarik dari APG</button>}
-        {!isSale && <button className="btn-ghost" onClick={exportEsb} disabled={!rows.length} title="Nota pembelian sesuai filter -> file import ESB Simple Purchase">⬇ Export ESB</button>}
+        {(!isSale || (company && company.id !== 1)) && <button className="btn-ghost" onClick={exportEsb} disabled={!rows.length} title={isSale ? 'Invoice penjualan sesuai filter -> file import ESB Simple Sales' : 'Nota pembelian sesuai filter -> file import ESB Simple Purchase'}>⬇ Export ESB</button>}
         {perms.invoice && <Link className="btn-primary" to={isSale ? '/penjualan/baru' : '/pembelian/baru'}>+ {isSale ? 'Invoice Penjualan' : 'Nota Pembelian'}</Link>}
       </>}>
         {isSale ? 'Penjualan' : 'Pembelian'}
@@ -126,7 +140,7 @@ export default function InvoicesPage({ kind }) {
               return (
                 <tr key={r.id} className={`cursor-pointer hover:bg-sky-50 ${ROW_BG[r.status]}`} onClick={() => nav(`/invoice/${r.id}`)}>
                   <td>{tgl(r.date)}</td>
-                  <td className="font-medium">{r.number}{isSale && r.gta_purchase ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Customer bertanda Pembelian GTA: invoice ini = pembelian PT GTA dari APG">GTA</span> : null}{r.source_invoice_id ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Disalin dari invoice penjualan APG (Tarik dari APG)">dari APG</span> : null}{r.dupCount > 1 && <span className={`ml-1 rounded px-1 text-[10px] font-semibold ${r.dupOpen ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-600'}`} title={r.dupOpen ? `No Inv dipakai ${r.dupCount} invoice - belum diberi catatan` : `No Inv dipakai ${r.dupCount} invoice: ${r.dup_note}`}>dobel</span>}</td>
+                  <td className="font-medium">{r.number}{isSale && r.gta_purchase ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Customer bertanda Pembelian GTA: invoice ini = pembelian PT GTA dari APG">GTA</span> : null}{r.source_invoice_id ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Disalin dari invoice penjualan APG (Tarik dari APG)">dari APG</span> : null}{isSale && r.hh_branch ? <span className="ml-1 rounded bg-orange-100 px-1 text-[10px] font-semibold text-orange-800" title="Cabang Hari-Hari">HH</span> : null}{r.dupCount > 1 && <span className={`ml-1 rounded px-1 text-[10px] font-semibold ${r.dupOpen ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-600'}`} title={r.dupOpen ? `No Inv dipakai ${r.dupCount} invoice - belum diberi catatan` : `No Inv dipakai ${r.dupCount} invoice: ${r.dup_note}`}>dobel</span>}</td>
                   <td>{r.party_name}</td>
                   {cols.flatMap((c) => {
                     const [q, h, zero] = cell(r, c.id, c.unit_name);

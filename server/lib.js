@@ -55,7 +55,7 @@ const reqStr = (v, label, max = 255) => {
 async function loadInvoices(db, cid, where = '1=1', params = [], order = 'i.date DESC, i.id DESC') {
   if (!Number(cid)) throw new Error('loadInvoices: company id wajib');
   const [invs] = await db.query(
-    `SELECT i.*, p.name AS party_name, p.gta_purchase FROM invoices i JOIN parties p ON p.id = i.party_id
+    `SELECT i.*, p.name AS party_name, p.gta_purchase, p.hh_branch FROM invoices i JOIN parties p ON p.id = i.party_id
      WHERE i.company_id = ? AND (${where}) ORDER BY ${order}`, [cid, ...params]);
   if (!invs.length) return [];
   const ids = invs.map((i) => i.id);

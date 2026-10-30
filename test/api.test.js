@@ -609,6 +609,66 @@ test('v4.1 Tarik dari APG: penjualan APG ke customer bertanda GTA jadi pembelian
   }
 });
 
+test('v4.2 import sheet GTA: Nominal = tagihan, cabang Hari-Hari pakai rumus (pilihan user untuk nama baru), import ulang tidak dobel', async () => {
+  const G = (m, p, b, tok = S.admin) => callC(2, m, p, b, tok);
+  const sheet = [
+    ['', 'No GD', 'No PI', 'No PO', 'No GR', '', 'Telor Curah', '', '', '', '', '', ''],
+    ['Tanggal', 'No Inv', 'No Nota Tagihan', 'NO PO', 'No Receive', 'Nama Pelanggan', 'kg', 'Harga', 'Total', 'Tgl Tagihan', 'Nominal', 'Status'],
+    ['1-Jul-2099', 'HH-1', 20054, 5216760, '', 'Kalideres', 750, 25100, 18825000, '', 18777937.5, ''],
+    ['1-Jul-2099', 'HH-2', 20057, 5217475, 'GR-9', 'Duta Harapan Indah', 750, 25100, 18825000, '', 18777937.5, 'Susut 1.4 kg'],
+    ['2-Jul-2099', 'HH-3', 2800, 4800000, '', 'Pluit Uji', 750, 29700, 22275000, '', 21663829.7, '-'],
+    ['2-Jul-2099', 'REG-1', '', '', '', 'Toko GTA Uji', 1799.76, 27800, 50033328, '', 50063328, 'Plus Ongkir 30k'],
+    ['3-Jul-2099', 'HH-4', 1, 2, 3, 'Cabang Lama Uji', 750, 25100, 18825000, '', 18777937.5, ''],
+  ];
+  // customer GTA yang sudah ada dan bertanda cabang Hari-Hari di master -> ikut tanda master
+  await ok(G('POST', '/parties', { kind: 'customer', name: 'Cabang Lama Uji', hh_branch: true }));
+  assert.equal((await call('POST', '/import/preview', { rows: sheet }, S.admin)).status, 400); // sheet GTA tidak boleh masuk APG
+
+  const prev = await ok(G('POST', '/import/preview', { rows: sheet }));
+  assert.equal(prev.format, 'gta');
+  // nama baru: hanya 13 cabang yang dikenal yang dicentang otomatis, sisanya tidak ditebak
+  assert.deepEqual(prev.newParties, [{ name: 'Kalideres', hh: true }, { name: 'Duta Harapan Indah', hh: true }, { name: 'Pluit Uji', hh: false }, { name: 'Toko GTA Uji', hh: false }]);
+  assert.deepEqual(prev.invoices.map((i) => !!i.hh), [true, true, false, false, true]);
+  const hhNames = ['Kalideres', 'Duta Harapan Indah', 'Pluit Uji'];
+  assert.deepEqual((await ok(G('POST', '/import/preview', { rows: sheet, hhNames }))).invoices.map((i) => !!i.hh), [true, true, true, false, true]);
+
+  const res = await ok(G('POST', '/import/commit', { rows: sheet, hhNames }));
+  assert.equal(res.imported.length, 5);
+  const custs = await ok(G('GET', '/parties?kind=customer'));
+  const flag = (n) => custs.find((p) => p.name === n).hh_branch;
+  assert.deepEqual(['Kalideres', 'Pluit Uji', 'Toko GTA Uji', 'Cabang Lama Uji'].map(flag), [1, 1, 0, 1]);
+
+  const inv = Object.fromEntries((await ok(G('GET', '/invoices?kind=sale&from=2099-07-01&to=2099-07-31'))).map((i) => [i.number, i]));
+  const d2 = inv['HH-2'];
+  assert.deepEqual([d2.lines[0].qty, d2.total, d2.adjusted, d2.outstanding, d2.paid, d2.importDiff], [766.4, round2(766.4 * 25100), 458702.5, 18777937.5, 0, 0]);
+  assert.deepEqual([d2.ref_pi, d2.po_ref, d2.ref_gr, d2.hh_susut, d2.hh_disc, d2.hh_branch], ['20057', '5217475', 'GR-9', 1.4, 458702.5, 1]);
+  const det = await ok(G('GET', `/invoices/${d2.id}`));
+  assert.deepEqual(det.adjustments.map((a) => [a.type, a.amount]), [['diskon', 458702.5]]);
+  assert.match(det.adjustments[0].note, /susut 1.4 kg/);
+  assert.deepEqual([inv['HH-1'].lines[0].qty, inv['HH-1'].outstanding], [765, 18777937.5]);
+  assert.deepEqual([inv['HH-4'].lines[0].qty, inv['HH-4'].outstanding, inv['HH-4'].ref_gr], [765, 18777937.5, '3']);
+  // Nominal sheet beda dari rumus -> selisih terbuka; "samakan dengan sheet" -> sisa = Nominal sheet
+  const d3 = inv['HH-3'];
+  assert.deepEqual([d3.importDiff, d3.diffOpen, d3.outstanding], [round2(21663829.7 - 22219312.5), true, 22219312.5]);
+  await ok(G('POST', `/invoices/${d3.id}/accept-import-total`, { note: 'potongan PO di nota tagihan' }, S.fin));
+  assert.equal((await ok(G('GET', `/invoices/${d3.id}`))).outstanding, 21663829.7);
+  // customer biasa: baris apa adanya, ongkir 30rb = selisih Nominal untuk dijustifikasi; Nominal bukan pembayaran
+  const r1 = inv['REG-1'];
+  assert.deepEqual([r1.lines[0].qty, r1.adjusted, r1.outstanding, r1.importDiff, r1.hh_disc], [1799.76, 0, 50033328, 30000, null]);
+  const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM payments WHERE company_id = 2 AND date >= "2099-07-01" AND date < "2099-08-01"');
+  assert.equal(n, 0);
+  assert.ok((await ok(G('GET', '/invoices?kind=sale&status=selisih&from=2099-07-01&to=2099-07-31'))).some((i) => i.number === 'REG-1'));
+
+  // import ulang: tidak dobel; APG tidak tersentuh; neraca GTA seimbang
+  const again = await ok(G('POST', '/import/commit', { rows: sheet, hhNames }));
+  assert.deepEqual([again.imported.length, again.skipped.length], [0, 5]);
+  assert.deepEqual(await ok(call('GET', '/invoices?kind=sale&from=2099-07-01&to=2099-07-31', null, S.fin)), []);
+  assert.equal((await ok(G('GET', '/reports/balance-sheet?as_of=2099-12-31'))).difference, 0);
+  // tanda cabang Hari-Hari hanya untuk customer
+  const sup = await ok(G('POST', '/parties', { kind: 'supplier', name: 'Supplier HH Uji', hh_branch: true }));
+  assert.equal((await ok(G('GET', '/parties?kind=supplier'))).find((p) => p.id === sup.id).hh_branch, 0);
+});
+
 test('v3 backup → restore ke database kosong menghasilkan laporan yang sama', async () => {
   assert.equal((await call('GET', '/backup', null, S.fin)).status, 403);
   const res = await fetch(base + '/backup', { headers: { authorization: `Bearer ${S.master}` } });

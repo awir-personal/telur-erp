@@ -22,6 +22,7 @@ module.exports = function masterRoutes(pool) {
       term_days: reqNum(b.term_days ?? 30, 'Termin (hari)', { min: 0 }), price_rule: optStr(b.price_rule, 2000), notes: optStr(b.notes, 2000),
       active: b.active === false || b.active === 0 ? 0 : 1,
       gta_purchase: b.gta_purchase === true || b.gta_purchase === 1 ? 1 : 0, // v4.0: penjualan ke customer ini = pembelian PT GTA
+      hh_branch: b.hh_branch === true || b.hh_branch === 1 ? 1 : 0, // v4.2: cabang Hari-Hari (rumus Hari-Hari saat import, customer ESB "Hari - Hari Swalayan")
     };
   }
   // Customer/supplier milik perusahaan aktif (v4.0) - dipakai sebelum mengubah data turunannya.
@@ -34,7 +35,7 @@ module.exports = function masterRoutes(pool) {
   r.post('/parties', W, async (req, res) => {
     if (!KINDS.includes(req.body.kind)) throw bad('Jenis tidak valid');
     const p = partyBody(req.body);
-    const [ins] = await pool.query('INSERT INTO parties SET ?', [{ kind: req.body.kind, company_id: req.cid, ...p, gta_purchase: req.body.kind === 'customer' ? p.gta_purchase : 0 }]).catch(dupAs('Nama sudah ada'));
+    const [ins] = await pool.query('INSERT INTO parties SET ?', [{ kind: req.body.kind, company_id: req.cid, ...p, ...(req.body.kind === 'customer' ? {} : { gta_purchase: 0, hh_branch: 0 }) }]).catch(dupAs('Nama sudah ada'));
     await log(pool, req.user, 'create', req.body.kind, ins.insertId, p);
     res.json({ id: ins.insertId });
   });
@@ -42,7 +43,7 @@ module.exports = function masterRoutes(pool) {
   r.put('/parties/:id', W, async (req, res) => {
     const own = await ownParty(req, req.params.id);
     const p = { ...partyBody(req.body) };
-    if (own.kind !== 'customer') p.gta_purchase = 0;
+    if (own.kind !== 'customer') Object.assign(p, { gta_purchase: 0, hh_branch: 0 });
     await pool.query('UPDATE parties SET ? WHERE id = ? AND company_id = ?', [p, own.id, req.cid]).catch(dupAs('Nama sudah ada'));
     await log(pool, req.user, 'update', 'party', Number(req.params.id), p);
     res.json({ ok: true });

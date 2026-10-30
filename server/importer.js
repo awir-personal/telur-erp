@@ -1,8 +1,8 @@
 // Membaca baris sheet penjualan (format 2 baris header: grup barang di atas, kg/Harga di bawah)
 // menjadi rencana invoice. Murni, tanpa DB.
 const { round2, lineTotal, parseNumber, parseDate, EPS } = require('./calc');
+const { hhCompute, susutFromStatus, norm } = require('./hariHari');
 
-const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 const UNIT_FROM_LABEL = { kg: 'kg', 'peti/tray': 'tray', 'tray/peti': 'tray', tray: 'tray', peti: 'peti', butir: 'butir', ikat: 'ikat' };
 
 function findHeader(rows) {
@@ -13,7 +13,9 @@ function findHeader(rows) {
   return -1;
 }
 
-function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
+// v4.2 format sheet PT GTA ("SiscaAR Telur - GTA"): kolom No Nota Tagihan / NO PO / No Receive, Nominal = TAGIHAN (bukan
+// pembayaran). isHH(nama) = customer cabang Hari-Hari -> dihitung rumus Hari-Hari (ditentukan route dari master + pilihan user).
+function parseSheet(sheetRows, { numberFormat = 'id', isHH = () => false } = {}) {
   const h = findHeader(sheetRows);
   if (h < 0) return { error: 'Baris header tidak ditemukan (butuh kolom "Tanggal" dan "No Inv").' };
   // Mulai dari kolom "Tanggal": kolom tambahan di kirinya (mis. centang "Sisca Done" / "Yusuf Done"
@@ -31,7 +33,11 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
     payDate: col((x) => x.startsWith('tgl') && x.includes('byr') || x === 'tgl bayar'),
     nominal: col((x) => x === 'nominal'),
     status: col((x) => x === 'status' || x === 'keterangan'),
+    pi: col((x) => x === 'no nota tagihan'),
+    po: col((x) => x === 'no po'),
+    gr: col((x) => x === 'no receive'),
   };
+  const gta = c.pi >= 0 || c.gr >= 0;
   const missing = ['date', 'no', 'name', 'total'].filter((k) => c[k] < 0);
   if (missing.length) return { error: `Kolom wajib tidak ditemukan: ${missing.join(', ')}` };
 
@@ -88,6 +94,15 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
     else inv.importedTotal = round2(inv.importedTotal + (total || 0));
 
     const status = c.status >= 0 ? String(row[c.status] ?? '').trim() : '';
+    if (gta) {
+      const ref = (k) => (c[k] >= 0 && String(row[c[k]] ?? '').trim()) || null;
+      Object.assign(inv, { refPi: ref('pi'), poRef: ref('po'), refGr: ref('gr'), status: status === '-' ? '' : status, nominal: null });
+      if (inv.status) inv.notes.push(inv.status);
+      const nominal = c.nominal >= 0 ? num(row[c.nominal]) : null;
+      if (Number.isNaN(nominal)) inv.warnings.push(`Baris ${rowNum}: Nominal tidak terbaca`);
+      else if (nominal) { inv.nominal = nominal; inv.importedTotal = nominal; } // Nominal = tagihan yang dikirim ke customer
+      continue;
+    }
     if (status && status !== '-') {
       if (/^po\b/i.test(status) && !inv.poRef) inv.poRef = status;
       else inv.notes.push(status);
@@ -112,13 +127,30 @@ function parseSheet(sheetRows, { numberFormat = 'id' } = {}) {
       const baris = list.filter((x) => x.number === inv.number).map((x) => `${x.rows[0]} (${x.partyName})`).join(', ');
       inv.warnings.unshift(`No Inv ${inv.number} ada di ${inv.dupCount} baris sheet (baris ${baris}) — masuk apa adanya sebagai ${inv.dupCount} invoice bernomor sama; beri catatan setelah import`);
     }
+    if (gta && isHH(inv.partyName) && inv.lines.length) return hariHari(inv);
     const computed = round2(inv.lines.reduce((s, l) => s + lineTotal(l), 0));
     const diff = round2(inv.importedTotal - computed);
-    if (Math.abs(diff) >= EPS) inv.warnings.push(`Total di sheet ${inv.importedTotal} ≠ hitungan ${computed} (selisih ${diff}) — perlu justifikasi setelah import`);
+    if (Math.abs(diff) >= EPS) inv.warnings.push(`${inv.nominal ? 'Nominal' : 'Total'} di sheet ${inv.importedTotal} ≠ hitungan ${computed} (selisih ${diff}) — perlu justifikasi setelah import`);
     if (/retur|return|susut/i.test(inv.notes.join(' '))) inv.warnings.push('Ada catatan retur/susut — total TIDAK dikurangi otomatis, catat sebagai penyesuaian bila perlu');
     return { ...inv, notes: inv.notes.join(' | ') || null, computedTotal: computed, diff: Math.abs(diff) < EPS ? 0 : diff };
   });
-  return { headerRow: h + 1, items: [...new Set(pairs.map((p) => p.item))], invoices, errors };
+  return { format: gta ? 'gta' : 'apg', headerRow: h + 1, items: [...new Set(pairs.map((p) => p.item))], invoices, errors };
+}
+
+// Invoice cabang Hari-Hari: baris = qty KIRIM (kg tagih + 2% + susut dari kolom Status), diskon = bruto − tagihan.
+// importedTotal = Nominal + diskon, sehingga "selisih" = Nominal sheet − tagihan rumus (0 bila cocok) dan diselesaikan
+// lewat alur selisih yang sama (justifikasi / samakan dengan sheet).
+function hariHari(inv) {
+  const { susut, warning } = susutFromStatus(inv.status);
+  const h = hhCompute(inv.lines, susut);
+  if (warning) inv.warnings.push(warning);
+  const importedTotal = inv.nominal ? round2(inv.nominal + h.disc) : h.gross;
+  const diff = round2(importedTotal - h.gross);
+  if (Math.abs(diff) >= EPS) inv.warnings.push(`Nominal di sheet ${inv.nominal} ≠ tagihan rumus Hari-Hari ${h.tagihan} (selisih ${diff}) — perlu justifikasi setelah import`);
+  return {
+    ...inv, lines: h.lines, importedTotal, notes: inv.notes.join(' | ') || null, computedTotal: h.gross, diff: Math.abs(diff) < EPS ? 0 : diff,
+    hh: { kgTagih: h.kgTagih, susut: h.susut, disc: h.disc, tagihan: h.tagihan },
+  };
 }
 
 module.exports = { parseSheet };

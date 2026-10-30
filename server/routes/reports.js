@@ -3,6 +3,7 @@ const { requirePerm } = require('../auth');
 const { round2, agingBucket, AGING_BUCKETS, addDays, todayWIB, EPS, lineTotal } = require('../calc');
 const { bad, log, tx, loadInvoices } = require('../lib');
 const { parseSheet } = require('../importer');
+const { isDefaultBranch, norm } = require('../hariHari');
 const { bumpCounter } = require('./invoices');
 
 module.exports = function reportRoutes(pool) {
@@ -114,17 +115,35 @@ module.exports = function reportRoutes(pool) {
     if (e.legacy) return 'nomor sudah ada';
     return e.seqs.has(inv.seq) ? 'baris ini sudah pernah diimport' : null;
   }
+  // v4.2 Sheet format GTA: customer cabang Hari-Hari dihitung rumus Hari-Hari. Customer yang sudah ada -> tanda di master
+  // (hh_branch); customer baru -> pilihan user di pratinjau (body.hhNames), awalnya dicentang hanya untuk 13 cabang yang dikenal.
+  async function planOf(db, cid, body) {
+    const opt = { numberFormat: body.numberFormat };
+    const first = parseSheet(body.rows || [], opt);
+    if (first.error) throw bad(first.error);
+    if (first.format !== 'gta') return first;
+    if (cid === 1) throw bad('Ini sheet format GTA (kolom No Nota Tagihan / No Receive) — pilih perusahaan GTA di header dulu');
+    const names = [...new Map(first.invoices.map((i) => [norm(i.partyName), i.partyName])).values()];
+    const [ps] = names.length ? await db.query('SELECT name, hh_branch FROM parties WHERE company_id = ? AND kind = "customer" AND name IN (?)', [cid, names]) : [[]];
+    const known = new Map(ps.map((p) => [norm(p.name), !!p.hh_branch]));
+    const chosen = Array.isArray(body.hhNames) ? new Set(body.hhNames.map(norm)) : null;
+    const isHH = (n) => (known.has(norm(n)) ? known.get(norm(n)) : chosen ? chosen.has(norm(n)) : isDefaultBranch(n));
+    const plan = parseSheet(body.rows, { ...opt, isHH });
+    plan.newParties = names.filter((n) => !known.has(norm(n))).map((name) => ({ name, hh: isHH(name) }));
+    plan.isHH = isHH;
+    return plan;
+  }
+
   r.post('/import/preview', requirePerm('import'), async (req, res) => {
-    const plan = parseSheet(req.body.rows || [], { numberFormat: req.body.numberFormat });
-    if (plan.error) throw bad(plan.error);
+    const plan = await planOf(pool, req.cid, req.body);
+    delete plan.isHH;
     const ex = await existingImports(pool, req.cid, plan.invoices);
     for (const inv of plan.invoices) inv.exists = !!skipReason(ex, inv);
     res.json(plan);
   });
 
   r.post('/import/commit', requirePerm('import'), async (req, res) => {
-    const plan = parseSheet(req.body.rows || [], { numberFormat: req.body.numberFormat });
-    if (plan.error) throw bad(plan.error);
+    const plan = await planOf(pool, req.cid, req.body);
     if (plan.errors.length && !req.body.ignoreErrors) throw bad('Masih ada baris error — perbaiki sheet atau centang "lewati baris error"');
     const result = await tx(pool, async (c) => {
       const cache = { party: new Map(), item: new Map(), unit: new Map() };
@@ -152,7 +171,11 @@ module.exports = function reportRoutes(pool) {
         const k = name.toLowerCase();
         if (cache.party.has(k)) return cache.party.get(k);
         let [[p]] = await c.query('SELECT id, term_days FROM parties WHERE company_id = ? AND kind = "customer" AND name = ?', [req.cid, name]);
-        if (!p) { const [ins] = await c.query('INSERT INTO parties (company_id, kind, name) VALUES (?, "customer", ?)', [req.cid, name]); p = { id: ins.insertId, term_days: 30 }; created.customers.push(name); }
+        if (!p) {
+          const hh = plan.isHH?.(name) ? 1 : 0;
+          const [ins] = await c.query('INSERT INTO parties (company_id, kind, name, hh_branch) VALUES (?, "customer", ?, ?)', [req.cid, name, hh]);
+          p = { id: ins.insertId, term_days: 30 }; created.customers.push(hh ? `${name} (cabang Hari-Hari)` : name);
+        }
         cache.party.set(k, p);
         return p;
       }
@@ -168,10 +191,17 @@ module.exports = function reportRoutes(pool) {
         const [ins] = await c.query('INSERT INTO invoices SET ?', [{
           company_id: req.cid, kind: 'sale', number: inv.number, import_seq: inv.seq, date: inv.date, party_id: p.id, due_date: addDays(inv.date, p.term_days),
           po_ref: inv.poRef, notes: inv.notes, imported_total: inv.importedTotal, created_by: req.user.id, updated_by: req.user.id,
+          ref_pi: inv.refPi || null, ref_gr: inv.refGr || null, hh_susut: inv.hh ? inv.hh.susut : null, hh_disc: inv.hh ? inv.hh.disc : null,
         }]);
         const lineRows = [];
         for (const [i, l] of inv.lines.entries()) lineRows.push([ins.insertId, await itemId(l.itemName, l.unitName), await unitId(l.unitName), l.qty, l.price, null, null, i]);
         await c.query('INSERT INTO invoice_lines (invoice_id, item_id, unit_id, qty, price, cost_price, note, sort) VALUES ?', [lineRows]);
+        if (inv.hh && inv.hh.disc) {
+          await c.query('INSERT INTO adjustments SET ?', [{
+            invoice_id: ins.insertId, date: inv.date, type: 'diskon', amount: inv.hh.disc, qty: null, created_by: req.user.id,
+            note: `Hari-Hari: tagihan ${inv.hh.kgTagih} kg × harga − 0,25%; kirim +2%${inv.hh.susut ? ` + susut ${inv.hh.susut} kg` : ''}`,
+          }]);
+        }
         done.push({ inv, id: ins.insertId, partyId: p.id, room: inv.computedTotal });
         await bumpCounter(c, req.cid, 'sale', inv.number);
         imported.push(label);
