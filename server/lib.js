@@ -78,7 +78,7 @@ async function loadInvoices(db, cid, where = '1=1', params = [], order = 'i.date
     const p = paidM.get(i.id);
     const s = summarize(linesM.get(i.id), p?.paid || 0, adjM.get(i.id)?.adjusted || 0, i.imported_total);
     const dupCount = dupM.get(`${i.kind}|${i.number}`) || 1;
-    return { ...i, lines: linesM.get(i.id), last_paid: p?.last_paid || null, methods: p?.methods || null, ...s, diffOpen: s.importDiff !== 0 && !i.diff_note, dupCount, dupOpen: dupCount > 1 && !i.dup_note };
+    return { ...i, lines: linesM.get(i.id), last_paid: p?.last_paid || null, methods: p?.methods || null, ...s, diffOpen: s.importDiff !== 0 && !i.diff_note, dupCount, dupOpen: dupCount > 1 && !i.dup_note && !i.source_invoice_id }; // salinan "Tarik dari APG": catatannya di invoice APG
   });
 }
 

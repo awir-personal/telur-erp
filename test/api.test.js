@@ -7,6 +7,7 @@ const mysql = require('mysql2/promise');
 const { createPool, migrate, connConfig } = require('../server/db');
 const { createApp } = require('../server/app');
 const sample = require('./fixtures/sheet-sample');
+const { round2 } = require('../server/calc');
 
 const DB = 'telur_erp_test_zz';
 let pool, server, base;
@@ -529,6 +530,83 @@ test('v4 multi-perusahaan: GTA punya pembukuan sendiri, data & laporan APG tidak
   // log mencatat perusahaannya
   const [[lg]] = await pool.query("SELECT company_id FROM activity_log WHERE action = 'create' AND entity = 'invoice_sale' ORDER BY id DESC LIMIT 1");
   assert.equal(lg.company_id, 2);
+});
+
+test('v4.1 Tarik dari APG: penjualan APG ke customer bertanda GTA jadi pembelian GTA dari APG / Farm, perubahan dilaporkan', async () => {
+  const G = (m, p, b, tok = S.admin) => callC(2, m, p, b, tok);
+  // APG: customer bertanda Pembelian GTA + 2 invoice; customer biasa tidak ikut
+  const tag = (await ok(call('POST', '/parties', { kind: 'customer', name: 'Angel Uji 2099', gta_purchase: true }, S.admin))).id;
+  const a1 = await ok(call('POST', '/invoices', { kind: 'sale', number: 'G-1', date: '2099-06-01', party_id: tag, po_ref: 'PO 7 Ikat', lines: [{ item_id: S.curah, unit_id: S.kg, qty: 783.07, price: 27600 }, { item_id: S.putih, unit_id: S.kg, qty: 167.2, price: 26600 }] }, S.admin));
+  const a2 = await ok(call('POST', '/invoices', { kind: 'sale', number: 'G-2', date: '2099-06-02', party_id: tag, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 765, price: 26600 }] }, S.admin));
+  await ok(call('POST', '/invoices', { kind: 'sale', number: 'BUKAN-GTA', date: '2099-06-02', party_id: S.cust, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 1, price: 1 }] }, S.admin));
+  const apgBefore = await ok(call('GET', '/reports/balance-sheet?as_of=2099-12-31', null, S.fin));
+
+  assert.equal((await call('GET', '/gta/apg-plan', null, S.fin)).status, 400); // dari APG sendiri tidak bisa
+  const plan = await ok(G('GET', '/gta/apg-plan'));
+  assert.deepEqual([plan.fresh.map((x) => x.number), plan.same, plan.changed, plan.orphan], [['G-1', 'G-2'], 0, [], []]);
+  assert.equal((await callC(2, 'POST', '/gta/apg-pull', {}, S.fin)).status, 403); // finance tidak boleh membuat nota
+  const res = await ok(G('POST', '/gta/apg-pull', {}));
+  // supplier "APG / Farm" sudah dibuat di tes isolasi (termin 30) -> dipakai, tidak dibuat dobel
+  assert.deepEqual([res.added, res.supplier, res.supplierCreated], [['G-1', 'G-2'], 'APG / Farm', false]);
+
+  // nota GTA: supplier APG / Farm (termin 90), nomor/tanggal/barang/harga sama dengan invoice APG
+  const buys = await ok(G('GET', '/invoices?kind=purchase&q=G-'));
+  const b1 = buys.find((x) => x.number === 'G-1');
+  assert.deepEqual([b1.party_name, b1.date, b1.due_date, b1.po_ref, b1.total, b1.source_invoice_id], ['APG / Farm', '2099-06-01', '2099-07-01', 'PO 7 Ikat', round2(783.07 * 27600) + round2(167.2 * 26600), a1.id]);
+  assert.deepEqual(b1.lines.map((l) => [l.item_id, l.qty, l.price]), [[S.curah, 783.07, 27600], [S.putih, 167.2, 26600]]);
+  assert.match(b1.notes, /Dari APG: penjualan ke Angel Uji 2099 No Inv G-1/);
+  const sup = (await ok(G('GET', '/parties?kind=supplier'))).find((p) => p.name === 'APG / Farm');
+  assert.equal(sup.term_days, 30); // termin supplier yang sudah ada dipakai apa adanya
+  // supplier diganti nama -> tetap dikenali (id diingat), tidak membuat "APG / Farm" baru
+  await ok(G('PUT', `/parties/${sup.id}`, { name: 'APG Farm (ESB)', term_days: 30 }, S.admin));
+  assert.equal((await ok(G('POST', '/gta/apg-pull', {}))).supplierCreated, false);
+  assert.equal((await ok(G('GET', '/parties?kind=supplier'))).filter((p) => /APG/.test(p.name)).length, 1);
+  await ok(G('PUT', `/parties/${sup.id}`, { name: 'APG / Farm', term_days: 30 }, S.admin));
+
+  // tarik ulang: tidak dobel; APG tidak berubah karena ditarik
+  assert.deepEqual((await ok(G('POST', '/gta/apg-pull', {}))).added, []);
+  assert.equal((await ok(G('GET', '/gta/apg-plan'))).same, 2);
+  assert.deepEqual(await ok(call('GET', '/reports/balance-sheet?as_of=2099-12-31', null, S.fin)), apgBefore);
+
+  // invoice APG diubah -> dilaporkan "berbeda", nota GTA TIDAK ikut berubah sampai diterapkan
+  await ok(call('PUT', `/invoices/${a2.id}`, { date: '2099-06-03', party_id: tag, lines: [{ item_id: S.curah, unit_id: S.kg, qty: 780, price: 26600 }] }, S.admin));
+  const p2 = await ok(G('GET', '/gta/apg-plan'));
+  assert.equal(p2.changed.length, 1);
+  assert.deepEqual(p2.changed[0].beda, ['Tanggal 2099-06-02 → 2099-06-03', 'Barang: Telor Curah 765 kg × 26600 → Telor Curah 780 kg × 26600']);
+  assert.equal((await ok(G('GET', '/invoices?kind=purchase&q=G-2')))[0].total, 765 * 26600);
+  await ok(G('POST', '/gta/apg-pull', {})); // tarik tanpa mencentang: perubahan TIDAK diterapkan
+  assert.equal((await ok(G('GET', '/invoices?kind=purchase&q=G-2')))[0].total, 765 * 26600);
+  await ok(G('POST', '/gta/apg-pull', { createNew: false, apply: [p2.changed[0].copyId] }));
+  const b2 = (await ok(G('GET', '/invoices?kind=purchase&q=G-2')))[0];
+  assert.deepEqual([b2.date, b2.total], ['2099-06-03', 780 * 26600]);
+  assert.equal((await ok(G('GET', '/gta/apg-plan'))).changed.length, 0);
+
+  // tanda GTA dilepas di APG -> nota GTA dilaporkan (yatim), tidak dihapus otomatis
+  await ok(call('PUT', `/parties/${tag}`, { name: 'Angel Uji 2099', gta_purchase: false }, S.admin));
+  const p3 = await ok(G('GET', '/gta/apg-plan'));
+  assert.deepEqual([p3.orphan.map((o) => o.number).sort(), p3.same], [['G-1', 'G-2'], 0]);
+  assert.equal((await ok(G('GET', '/invoices?kind=purchase&q=G-'))).length, 2);
+  await ok(call('PUT', `/parties/${tag}`, { name: 'Angel Uji 2099', gta_purchase: true }, S.admin));
+
+  // neraca GTA tetap seimbang: hutang ke APG / Farm bertambah sebesar nota tarikan
+  assert.equal((await ok(G('GET', '/reports/balance-sheet?as_of=2099-12-31'))).difference, 0);
+
+  // perusahaan yang belum punya supplier APG -> "APG / Farm" dibuat otomatis dengan termin 90 hari (keputusan GTA)
+  await pool.query("INSERT INTO companies (id, code, name, sort_order) VALUES (3, 'UJI', 'Perusahaan Uji 3', 3)");
+  try {
+    const r3 = await ok(callC(3, 'POST', '/gta/apg-pull', {}, S.admin));
+    assert.deepEqual([r3.supplierCreated, r3.supplier, r3.added], [true, 'APG / Farm', ['G-1', 'G-2']]);
+    const n1 = (await ok(callC(3, 'GET', '/invoices?kind=purchase&q=G-1', null, S.admin)))[0];
+    assert.equal(n1.due_date, '2099-08-30'); // 1 Jun + 90 hari
+    assert.equal((await ok(callC(3, 'POST', '/gta/apg-pull', {}, S.admin))).supplierCreated, false);
+  } finally {
+    const [ids] = await pool.query('SELECT id FROM invoices WHERE company_id = 3');
+    if (ids.length) await pool.query('DELETE FROM invoices WHERE id IN (?)', [ids.map((x) => x.id)]);
+    await pool.query('DELETE FROM parties WHERE company_id = 3');
+    await pool.query("DELETE FROM settings WHERE k LIKE 'c3.%'");
+    await pool.query("UPDATE activity_log SET company_id = NULL WHERE company_id = 3");
+    await pool.query('DELETE FROM companies WHERE id = 3');
+  }
 });
 
 test('v3 backup → restore ke database kosong menghasilkan laporan yang sama', async () => {

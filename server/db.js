@@ -294,6 +294,12 @@ const MIGRATIONS = [
     `UPDATE parties SET gta_purchase = 1 WHERE company_id = 1 AND kind = 'customer' AND name IN ('Angel', 'Adi', 'Adi D', 'Potteria Restaurant')`,
     `INSERT IGNORE INTO accounts (company_id, name, type, sort_order) VALUES (2, 'Kas Tunai', 'kas', 0)`,
   ]],
+  // v4.1 — "Tarik dari APG": nota pembelian GTA hasil salinan invoice penjualan APG (customer bertanda Pembelian GTA)
+  // menyimpan id invoice APG asalnya: tarik ulang tidak dobel, perubahan di APG terdeteksi.
+  ['006_tarik_dari_apg', [
+    addColumn('invoices', 'source_invoice_id', 'INT NULL'),
+    addIndex('invoices', 'ix_inv_source', '(company_id, source_invoice_id)'),
+  ]],
 ];
 
 function indexExists(conn, table, name) {

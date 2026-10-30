@@ -6,11 +6,13 @@ import { ErrorBox, PageTitle, StatusBadge, useAuth, useLoad } from '../component
 import { firstOfMonth, qty, rp, tgl, today, STATUS } from '../format';
 import { downloadXlsx, xlDate } from '../lib/excel';
 import { esbPurchaseAoa } from '../lib/esb.mjs';
+import ApgPull from '../components/ApgPull';
 
 const ROW_BG = { lunas: 'bg-green-50', sebagian: 'bg-amber-50', belum: '', lebih_bayar: 'bg-purple-50' };
 
 export default function InvoicesPage({ kind }) {
-  const { perms } = useAuth();
+  const { perms, company } = useAuth();
+  const [pullOpen, setPullOpen] = useState(false); // v4.1 Tarik dari APG (hanya di perusahaan selain APG)
   const nav = useNavigate();
   const isSale = kind === 'sale';
   const [sp] = useSearchParams();
@@ -81,11 +83,13 @@ export default function InvoicesPage({ kind }) {
     <div>
       <PageTitle right={<>
         <button className="btn-ghost" onClick={exportExcel} disabled={!rows.length}>⬇ Excel</button>
+        {!isSale && company?.id !== 1 && perms.invoice && <button className="btn-ghost" onClick={() => setPullOpen(true)} title="Salin penjualan APG ke customer bertanda Pembelian GTA menjadi nota pembelian dari APG / Farm">⇩ Tarik dari APG</button>}
         {!isSale && <button className="btn-ghost" onClick={exportEsb} disabled={!rows.length} title="Nota pembelian sesuai filter -> file import ESB Simple Purchase">⬇ Export ESB</button>}
         {perms.invoice && <Link className="btn-primary" to={isSale ? '/penjualan/baru' : '/pembelian/baru'}>+ {isSale ? 'Invoice Penjualan' : 'Nota Pembelian'}</Link>}
       </>}>
         {isSale ? 'Penjualan' : 'Pembelian'}
       </PageTitle>
+      {pullOpen && <ApgPull onClose={() => setPullOpen(false)} onDone={() => list.reload()} />}
       {esbMsg && <div className={`mb-3 flex items-start justify-between gap-2 rounded border p-2 text-sm ${/TIDAK|Dilewati|Gagal/.test(esbMsg) ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}><span>{esbMsg}</span><button className='text-slate-500' onClick={() => setEsbMsg(null)} title='Tutup'>✕</button></div>}
       <div className="card mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <label><span className="lbl">Dari</span><input type="date" className="inp" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></label>
@@ -122,7 +126,7 @@ export default function InvoicesPage({ kind }) {
               return (
                 <tr key={r.id} className={`cursor-pointer hover:bg-sky-50 ${ROW_BG[r.status]}`} onClick={() => nav(`/invoice/${r.id}`)}>
                   <td>{tgl(r.date)}</td>
-                  <td className="font-medium">{r.number}{r.dupCount > 1 && <span className={`ml-1 rounded px-1 text-[10px] font-semibold ${r.dupOpen ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-600'}`} title={r.dupOpen ? `No Inv dipakai ${r.dupCount} invoice - belum diberi catatan` : `No Inv dipakai ${r.dupCount} invoice: ${r.dup_note}`}>dobel</span>}</td>
+                  <td className="font-medium">{r.number}{isSale && r.gta_purchase ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Customer bertanda Pembelian GTA: invoice ini = pembelian PT GTA dari APG">GTA</span> : null}{r.source_invoice_id ? <span className="ml-1 rounded bg-teal-100 px-1 text-[10px] font-semibold text-teal-800" title="Disalin dari invoice penjualan APG (Tarik dari APG)">dari APG</span> : null}{r.dupCount > 1 && <span className={`ml-1 rounded px-1 text-[10px] font-semibold ${r.dupOpen ? 'bg-amber-200 text-amber-900' : 'bg-slate-200 text-slate-600'}`} title={r.dupOpen ? `No Inv dipakai ${r.dupCount} invoice - belum diberi catatan` : `No Inv dipakai ${r.dupCount} invoice: ${r.dup_note}`}>dobel</span>}</td>
                   <td>{r.party_name}</td>
                   {cols.flatMap((c) => {
                     const [q, h, zero] = cell(r, c.id, c.unit_name);
